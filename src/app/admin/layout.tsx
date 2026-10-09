@@ -19,7 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           { href: "/admin/usuarios", label: "Técnicos", icon: "users" },
         ]}
       />
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-5">{children}</main>
+      <main className="mx-auto max-w-5xl space-y-4 px-4 py-5 pb-[calc(110px+env(safe-area-inset-bottom))] md:pb-5">{children}</main>
     </>
   );
 }

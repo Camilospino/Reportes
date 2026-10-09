@@ -10,10 +10,16 @@ const ICONS = { dashboard: LayoutDashboard, reports: FileText, users: Users, his
 export type NavLink = { href: string; label: string; icon: keyof typeof ICONS };
 
 /** Pestaña activa: la de ruta más larga que coincide (así /admin/reportes/123 marca "Reportes", no "Panel"). */
-function activeHref(pathname: string, links: NavLink[]): string | undefined {
+export function activeHref(pathname: string, links: NavLink[]): string | undefined {
   return links
     .filter((l) => pathname === l.href || pathname.startsWith(`${l.href}/`))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+}
+
+/** Iniciales para el avatar: primera letra del nombre y del último apellido. */
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "")).toUpperCase();
 }
 
 export function HeaderNav({ links }: { links: NavLink[] }) {

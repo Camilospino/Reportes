@@ -61,3 +61,13 @@ body {
     @apply mt-1 text-sm font-medium text-red-700;
   }
 }
+
+/* Panel de Cuenta (celular): entra desde abajo. */
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}

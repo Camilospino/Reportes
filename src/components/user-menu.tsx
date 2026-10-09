@@ -4,11 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, Key, LogOut } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "")).toUpperCase();
-}
+import { initials } from "./header-nav";
 
 /** Avatar con menú desplegable: "Mi contraseña" y "Salir". Se cierra al hacer clic afuera o con Escape. */
 export function UserMenu({ userName }: { userName: string }) {

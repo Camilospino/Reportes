@@ -10,6 +10,7 @@
  */
 import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import { parseEnv } from "node:util";
 import { PrismaClient } from "@prisma/client";
 
@@ -30,7 +31,24 @@ function qaEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+/** ¿Hay algo escuchando en el puerto de QA? */
+function qaRunning(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ port: QA_PORT, host: "127.0.0.1" });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
+  });
+}
+
 async function deploy() {
+  // Compilar con QA abierto reemplaza los archivos que el servidor está usando y lo deja roto.
+  if (await qaRunning()) {
+    console.error(`QA está abierto en el puerto ${QA_PORT}. Deténgalo (Ctrl+C en su terminal) y vuelva a ejecutar: npm run qa:deploy`);
+    process.exit(1);
+  }
   const env = qaEnv();
   const run = (cmd: string) => execSync(cmd, { stdio: "inherit", env });
 
@@ -55,7 +73,7 @@ async function deploy() {
   if (users === 0) run("npx tsx prisma/seed.ts");
 
   run("npx next build");
-  console.log(`\nQA compilado. Si QA ya estaba abierto, deténgalo (Ctrl+C) y ejecute: npm run qa:start`);
+  console.log(`\nQA compilado. Ábralo con: npm run qa:start`);
 }
 
 function start() {

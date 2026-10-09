@@ -31,8 +31,8 @@ export { expect };
 
 export async function login(page: Page, username: string, password = PASSWORD) {
   await page.goto("/login");
-  await page.getByLabel("Usuario").fill(username);
-  await page.getByLabel("Contraseña").fill(password);
+  await page.getByLabel("Usuario", { exact: true }).fill(username);
+  await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Ingresar" }).click();
   await expect(page).not.toHaveURL(/\/login/);
 }

@@ -112,7 +112,7 @@ test.describe.serial("Flujo principal", () => {
   test("admin rechaza un cierre con comentario y vuelve a Pendiente", async ({ page }) => {
     await login(page, "admin");
     await page.goto("/admin/reportes?estado=REALIZADO");
-    await page.locator("main a", { hasText: "Carrera 43A" }).first().click();
+    await page.locator("main a", { hasText: "Carrera 3 # 8-100" }).first().click();
     await page.getByRole("button", { name: "✖ Rechazar cierre" }).click();
     const confirm = page.getByRole("button", { name: /Confirmar: Rechazar cierre/ });
     await expect(confirm).toBeDisabled(); // comentario obligatorio
@@ -123,10 +123,11 @@ test.describe.serial("Flujo principal", () => {
 
   test("filtros y búsqueda sin tildes", async ({ page }) => {
     await login(page, "admin");
-    await page.goto("/admin/reportes?q=bogota&estado=PENDIENTE");
-    await expect(page.getByText(/reportes?$/).first()).toBeVisible();
-    await expect(page.locator("main").getByText("Calle 45 # 12-30").first()).toBeVisible();
-    await expect(page.locator("main").getByText("Carrera 43A")).toHaveCount(0);
+    // "getsemani" sin tilde encuentra el barrio "Getsemaní".
+    await page.goto("/admin/reportes?q=getsemani&estado=PENDIENTE");
+    await expect(page.locator("main").getByText(/reportes?$/).first()).toBeVisible();
+    await expect(page.locator("main").getByText("Carrera 10 # 41-60").first()).toBeVisible();
+    await expect(page.locator("main").getByText("Carrera 2 # 9-145")).toHaveCount(0);
   });
 
   test("admin crea técnico, este cambia la clave temporal al entrar", async ({ page, browser }) => {
@@ -141,8 +142,8 @@ test.describe.serial("Flujo principal", () => {
     const ctx = await browser.newContext();
     const p2 = await ctx.newPage();
     await p2.goto(`${BASE_URL}/login`);
-    await p2.getByLabel("Usuario").fill("pnuevo");
-    await p2.getByLabel("Contraseña").fill(temp);
+    await p2.getByLabel("Usuario", { exact: true }).fill("pnuevo");
+    await p2.getByLabel("Contraseña", { exact: true }).fill(temp);
     await p2.getByRole("button", { name: "Ingresar" }).click();
     await expect(p2).toHaveURL(/\/cambiar-clave$/);
     // Mientras no la cambie, no puede usar la app.

@@ -1,23 +1,20 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import { Outfit } from "next/font/google";
 import { getCurrentUser, homeFor } from "@/server/session";
 import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Ingresar" };
 
+// Solo para esta página. Se descarga al compilar y se sirve desde la app (CSP: font-src 'self').
+const outfit = Outfit({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"] });
+
 export default async function LoginPage() {
+  // Con sesión ya iniciada se va a su panel. Lo hace LoginForm y no un redirect() aquí: al entrar,
+  // Next vuelve a renderizar esta página y un redirect() cortaría la animación del carnet.
   const user = await getCurrentUser();
-  if (user) redirect(homeFor(user.role));
   return (
-    <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center px-4 py-10">
-      <div className="mb-6 text-center">
-        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-700 text-2xl font-bold text-white">
-          R
-        </div>
-        <h1 className="text-2xl font-bold">Reportes de daños</h1>
-        <p className="text-slate-600">Ingrese con su usuario</p>
-      </div>
-      <LoginForm />
+    <main className={`${outfit.className} flex min-h-dvh flex-col items-center overflow-x-hidden bg-[#0F172A] px-4 pb-12`}>
+      <LoginForm loggedInHome={user ? homeFor(user.role) : null} />
     </main>
   );
 }

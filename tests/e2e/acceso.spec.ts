@@ -31,8 +31,10 @@ test.describe("Control de acceso", () => {
 
   test("un técnico no ve reportes asignados a otro técnico", async ({ page }) => {
     await login(page, "tecnico1");
-    // El reporte de "Carrera 15 # 93-60" está asignado a tecnico2 (semilla).
-    await expect(page.getByText("Carrera 15 # 93-60")).toHaveCount(0);
+    // Control positivo: sí ve uno libre (si no, la aserción de abajo pasaría con la página vacía).
+    await expect(page.getByText("Carrera 2 # 9-145")).toBeVisible();
+    // El reporte de "Carrera 10 # 41-60" está asignado a tecnico2 (semilla).
+    await expect(page.getByText("Carrera 10 # 41-60")).toHaveCount(0);
   });
 
   test("subida de fotos rechaza otro origen (CSRF)", async ({ page }) => {
@@ -47,7 +49,7 @@ test.describe("Control de acceso", () => {
   test("un técnico no puede subir fotos a un reporte que no tiene en proceso", async ({ page }) => {
     await login(page, "tecnico1");
     // Abrir un reporte disponible (no tomado) y tratar de subirle foto vía API.
-    await page.getByRole("link", { name: /Calle 45 # 12-30/ }).click();
+    await page.getByRole("link", { name: /Carrera 2 # 9-145/ }).click();
     await page.waitForURL(/\/tecnico\/reportes\//);
     const reportId = page.url().split("/").pop()!;
     const res = await page.request.post(`/api/reportes/${reportId}/fotos`, {
@@ -85,8 +87,8 @@ test.describe("Control de acceso", () => {
 
   test("login: credenciales incorrectas muestran mensaje genérico", async ({ page }) => {
     await page.goto("/login");
-    await page.getByLabel("Usuario").fill("noexiste");
-    await page.getByLabel("Contraseña").fill("loquesea");
+    await page.getByLabel("Usuario", { exact: true }).fill("noexiste");
+    await page.getByLabel("Contraseña", { exact: true }).fill("loquesea");
     await page.getByRole("button", { name: "Ingresar" }).click();
     await expect(page.getByText("Usuario o contraseña incorrectos.")).toBeVisible();
   });

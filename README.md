@@ -47,8 +47,9 @@ Para probar desde el celular en la misma red: `http://<IP-de-su-PC>:3100`.
 Flujo: **desarrollo → QA → producción**. Cuando un cambio está listo para probar, se "sube a QA":
 
 ```bash
+# Si QA está abierto, deténgalo primero (Ctrl+C): qa:deploy no compila con QA corriendo.
 npm run qa:deploy   # compila el código actual en .next-qa y migra reportes_qa (la 1.ª vez carga datos de ejemplo)
-npm run qa:start    # deténgalo antes con Ctrl+C si ya estaba abierto
+npm run qa:start    # abre QA en http://localhost:3300
 ```
 
 QA conserva sus datos entre deploys. Usa una cookie de sesión propia, así que se puede tener

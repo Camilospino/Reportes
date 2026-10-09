@@ -9,7 +9,14 @@ import { clientInfo } from "@/server/request";
 import { createSession, destroySession, getCurrentUser, homeFor, requireUser } from "@/server/session";
 import { authenticate, changeOwnPassword } from "@/server/users";
 
-export async function loginAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+/**
+ * Inicia sesión. No redirige: devuelve la ruta de inicio para que el carnet del login alcance a
+ * voltearse ("Acceso válido") antes de que el navegador navegue a ella.
+ */
+export async function loginAction(
+  _prev: ActionResult<{ target: string }> | null,
+  formData: FormData,
+): Promise<ActionResult<{ target: string }>> {
   const parsed = loginSchema.safeParse({ username: formData.get("username"), password: formData.get("password") });
   if (!parsed.success) return { ok: false, error: "Revise los datos.", fieldErrors: fieldErrors(parsed.error) };
 
@@ -22,7 +29,7 @@ export async function loginAction(_prev: ActionResult | null, formData: FormData
   } catch (e) {
     return toActionError(e);
   }
-  redirect(target);
+  return { ok: true, data: { target } };
 }
 
 export async function logoutAction(): Promise<void> {

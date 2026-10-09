@@ -40,7 +40,7 @@ export default async function ReportsListPage({ searchParams }: { searchParams: 
       <form method="get" className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-3" role="search">
         <div className="sm:col-span-2 lg:col-span-3">
           <label htmlFor="q" className="label">
-            Buscar por dirección
+            Buscar por dirección o contrato
           </label>
           <input id="q" name="q" type="search" defaultValue={filters.q} placeholder="Contrato, calle, barrio…" className="input" />
         </div>

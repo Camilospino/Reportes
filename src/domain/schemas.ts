@@ -1,0 +1,206 @@
+/**
+ * Esquemas de validación (Zod) compartidos por el navegador y el servidor.
+ * El servidor SIEMPRE vuelve a validar: lo del navegador es solo para dar respuesta rápida.
+ */
+import { z } from "zod";
+import { CATEGORIES, PRIORITIES } from "./types";
+import { SERVICE_CITY } from "./location";
+import {
+  DATE_RE,
+  DATETIME_LOCAL_RE,
+  bogotaDateString,
+  parseBogotaDateTimeLocal,
+} from "@/lib/dates";
+
+/** Texto obligatorio: recorta espacios y exige contenido. */
+const requiredText = (max: number, message = "Este campo es obligatorio.") =>
+  z
+    .string({ required_error: message, invalid_type_error: message })
+    .trim()
+    .min(1, message)
+    .max(max, `Máximo ${max} caracteres.`);
+
+/** Texto opcional: cadena vacía se convierte en undefined. */
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max, `Máximo ${max} caracteres.`)
+    .optional()
+    .transform((v) => (v ? v : undefined));
+
+/** Teléfono colombiano: fijo o celular, con o sin +57. Se guarda solo con dígitos (y + inicial). */
+export const phoneSchema = z
+  .string({ required_error: "Ingrese el teléfono." })
+  .trim()
+  .transform((v) => v.replace(/[\s().-]/g, ""))
+  .refine((v) => /^\+?\d{7,13}$/.test(v), "Teléfono no válido. Use solo números, ej.: 3001234567.");
+
+/** Número de contrato: letras, números y guiones. Se guarda en mayúsculas y sin espacios. */
+export const contractNumberSchema = z
+  .string({ required_error: "Ingrese el número de contrato." })
+  .trim()
+  .min(1, "Ingrese el número de contrato.")
+  .transform((v) => v.replace(/\s+/g, "").toUpperCase())
+  .refine((v) => /^[A-Z0-9-]{3,30}$/.test(v), "Número de contrato no válido: de 3 a 30 letras, números o guiones.");
+
+const uuid = z.string().uuid("Identificador no válido.");
+
+// ─── Reportes ──────────────────────────────────────────────────────────
+
+export const reportInputSchema = z.object({
+  street: requiredText(200, "Ingrese la calle o dirección."),
+  neighborhood: requiredText(120, "Ingrese el barrio."),
+  /** Solo se opera en Cartagena: se ignora lo que envíe el navegador. */
+  city: z.literal(SERVICE_CITY).catch(SERVICE_CITY),
+  referencePoint: optionalText(200),
+  category: z.enum(CATEGORIES, { errorMap: () => ({ message: "Seleccione la categoría." }) }),
+  description: requiredText(2000, "Describa el posible daño."),
+  priority: z.enum(PRIORITIES, { errorMap: () => ({ message: "Seleccione la prioridad." }) }),
+  clientName: requiredText(120, "Ingrese el nombre del cliente."),
+  clientPhone: phoneSchema,
+  contractNumber: contractNumberSchema,
+  assignedToId: z
+    .union([uuid, z.literal("")])
+    .optional()
+    .transform((v) => (v ? v : null)),
+});
+export type ReportInput = z.infer<typeof reportInputSchema>;
+
+export const reportUpdateSchema = reportInputSchema.extend({
+  version: z.coerce.number().int().min(0),
+});
+
+// ─── Cambios de estado ─────────────────────────────────────────────────
+
+const requestId = uuid;
+
+/** Resultado de la visita del técnico. */
+export const outcomeSchema = z.discriminatedUnion("transition", [
+  z.object({
+    transition: z.literal("REALIZADO"),
+    reportId: uuid,
+    requestId,
+    note: optionalText(1000),
+    attachmentIds: z
+      .array(uuid)
+      .min(1, "Debe subir al menos una foto como evidencia.")
+      .max(10, "Máximo 10 fotos."),
+  }),
+  z.object({
+    transition: z.literal("APLAZADO"),
+    reportId: uuid,
+    requestId,
+    reason: requiredText(1000, "Indique el motivo del aplazamiento."),
+    newDate: z
+      .string()
+      .optional()
+      .transform((v) => (v ? v : undefined))
+      .refine((v) => v === undefined || DATE_RE.test(v), "Fecha no válida.")
+      .refine((v) => v === undefined || v >= bogotaDateString(), "La nueva fecha no puede ser anterior a hoy."),
+  }),
+  z.object({
+    transition: z.literal("CLIENTE_AUSENTE"),
+    reportId: uuid,
+    requestId,
+    attemptedAt: z
+      .string({ required_error: "Indique la fecha y hora del intento." })
+      .regex(DATETIME_LOCAL_RE, "Indique la fecha y hora del intento.")
+      // Se permiten 5 minutos de tolerancia por diferencias de reloj del celular.
+      .refine(
+        (v) => parseBogotaDateTimeLocal(v).getTime() <= Date.now() + 5 * 60_000,
+        "La fecha del intento no puede ser futura.",
+      ),
+    attachmentIds: z.array(uuid).max(5, "Máximo 5 fotos.").default([]),
+  }),
+]);
+export type OutcomeInput = z.input<typeof outcomeSchema>;
+
+/** Tomar o liberar un reporte (técnico). */
+export const technicianSimpleSchema = z.object({
+  transition: z.enum(["TOMAR", "LIBERAR"]),
+  reportId: uuid,
+  requestId,
+});
+
+/** Decisiones del administrador. Rechazar, reprogramar y cancelar exigen comentario. */
+export const adminDecisionSchema = z
+  .object({
+    transition: z.enum(["VERIFICAR", "RECHAZAR", "REPROGRAMAR", "CANCELAR"]),
+    reportId: uuid,
+    requestId,
+    comment: optionalText(1000),
+  })
+  .superRefine((v, ctx) => {
+    if (v.transition !== "VERIFICAR" && (!v.comment || v.comment.length < 5)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["comment"],
+        message: "Escriba un comentario (mínimo 5 caracteres) explicando la decisión.",
+      });
+    }
+  });
+
+// ─── Listado / filtros ─────────────────────────────────────────────────
+
+/** Filtros del listado del admin (vienen de la URL; lo inválido se ignora). */
+export const reportFiltersSchema = z.object({
+  estado: z.string().optional(),
+  prioridad: z.string().optional(),
+  tecnico: z.string().optional(),
+  desde: z.string().regex(DATE_RE).optional().catch(undefined),
+  hasta: z.string().regex(DATE_RE).optional().catch(undefined),
+  q: z.string().trim().max(100).optional().catch(undefined),
+  page: z.coerce.number().int().min(1).max(10_000).catch(1).default(1),
+});
+
+// ─── Usuarios y autenticación ──────────────────────────────────────────
+
+export const usernameSchema = z
+  .string({ required_error: "Ingrese el usuario." })
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9._-]{3,30}$/, "Usuario de 3 a 30 caracteres: letras, números, punto, guion.");
+
+export const loginSchema = z.object({
+  username: z.string().trim().toLowerCase().min(1, "Ingrese el usuario.").max(50),
+  password: z.string().min(1, "Ingrese la contraseña.").max(128),
+});
+
+export const passwordSchema = z
+  .string()
+  .min(8, "Mínimo 8 caracteres.")
+  .max(128, "Máximo 128 caracteres.")
+  .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), "Debe contener letras y números.");
+
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Ingrese su contraseña actual.").max(128),
+    newPassword: passwordSchema,
+    confirmPassword: z.string(),
+  })
+  .refine((v) => v.newPassword === v.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Las contraseñas no coinciden.",
+  })
+  .refine((v) => v.newPassword !== v.currentPassword, {
+    path: ["newPassword"],
+    message: "La nueva contraseña debe ser diferente a la actual.",
+  });
+
+export const technicianCreateSchema = z.object({
+  name: requiredText(120, "Ingrese el nombre completo."),
+  username: usernameSchema,
+  phone: z
+    .string()
+    .optional()
+    .transform((v) => (v?.trim() ? v : undefined))
+    .pipe(phoneSchema.optional()),
+});
+
+export const userIdSchema = z.object({ userId: uuid });
+
+/** Convierte errores de Zod al formato { campo: [mensajes] } que consumen los formularios. */
+export function fieldErrors(error: z.ZodError): Record<string, string[] | undefined> {
+  return error.flatten().fieldErrors as Record<string, string[] | undefined>;
+}

@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+/* Paleta pensada para uso en exteriores: alto contraste, fondo claro. */
+@theme {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-600: #1d4ed8;
+  --color-brand-700: #1e40af;
+  --color-brand-800: #1e3a8a;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-slate-100 text-slate-900 antialiased;
+  font-size: 16px; /* evita el zoom automático de iOS al enfocar campos */
+  -webkit-tap-highlight-color: transparent;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-5 text-base font-semibold
+      transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-brand-600
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-lg {
+    @apply min-h-14 w-full text-lg;
+  }
+  .btn-primary {
+    @apply bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-800;
+  }
+  .btn-secondary {
+    @apply border-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50;
+  }
+  .btn-success {
+    @apply bg-green-700 text-white hover:bg-green-800;
+  }
+  .btn-warning {
+    @apply bg-amber-500 text-slate-900 hover:bg-amber-600;
+  }
+  .btn-danger {
+    @apply bg-red-700 text-white hover:bg-red-800;
+  }
+  .btn-ghost {
+    @apply text-brand-700 underline-offset-4 hover:underline;
+  }
+  .card {
+    @apply rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5;
+  }
+  .label {
+    @apply mb-1 block text-sm font-semibold text-slate-700;
+  }
+  .input {
+    @apply block min-h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-base text-slate-900
+      placeholder:text-slate-400 focus:border-brand-600 focus:outline-none aria-[invalid=true]:border-red-600;
+  }
+  .field-error {
+    @apply mt-1 text-sm font-medium text-red-700;
+  }
+}

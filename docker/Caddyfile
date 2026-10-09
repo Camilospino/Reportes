@@ -1,0 +1,17 @@
+# Caddy obtiene y renueva el certificado HTTPS (Let's Encrypt) automáticamente.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Límite del cuerpo de la petición (fotos ya comprimidas ≤ ~1 MB; margen 8 MB).
+	request_body {
+		max_size 8MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Caddy reemplaza X-Forwarded-For con la IP real del cliente (no confía en la entrante).
+	reverse_proxy app:3000
+}

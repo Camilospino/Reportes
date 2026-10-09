@@ -1,0 +1,190 @@
+// Modelo de datos de Reportes de Daños.
+// Convención: modelos/campos en camelCase (TypeScript), tablas/columnas en snake_case (SQL).
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  TECNICO
+}
+
+/// El orden importa: se usa en la máquina de estados y en los filtros.
+enum ReportStatus {
+  PENDIENTE
+  EN_PROCESO
+  REALIZADO
+  APLAZADO
+  CLIENTE_AUSENTE
+  VERIFICADO
+  CANCELADO
+}
+
+/// Tipos de daño de un proveedor de internet.
+enum DamageCategory {
+  SIN_SERVICIO
+  LENTITUD
+  FIBRA_CABLEADO
+  EQUIPO
+  WIFI
+  OTRO
+}
+
+/// El orden importa: ordenar ascendente pone ALTA primero.
+enum Priority {
+  ALTA
+  MEDIA
+  BAJA
+}
+
+enum AttachmentKind {
+  EVIDENCIA
+  FACHADA
+}
+
+enum AuditEntity {
+  REPORT
+  USER
+  AUTH
+}
+
+model User {
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String   @db.VarChar(120)
+  /// Siempre en minúsculas.
+  username           String   @unique @db.VarChar(50)
+  passwordHash       String   @map("password_hash")
+  role               Role
+  phone              String?  @db.VarChar(20)
+  active             Boolean  @default(true)
+  mustChangePassword Boolean  @default(false) @map("must_change_password")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sessions        Session[]
+  assignedReports Report[]     @relation("AssignedReports")
+  createdReports  Report[]     @relation("CreatedReports")
+  attachments     Attachment[]
+  auditEntries    AuditLog[]   @relation("AuditActor")
+  auditAsTarget   AuditLog[]   @relation("AuditTargetUser")
+
+  @@map("users")
+}
+
+model Session {
+  /// SHA-256 del token de la cookie (el token en claro nunca se guarda).
+  id        String   @id @db.VarChar(64)
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  userAgent String?  @map("user_agent") @db.VarChar(255)
+  ip        String?  @db.VarChar(64)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Report {
+  id             String         @id @default(uuid()) @db.Uuid
+  /// Consecutivo legible, se muestra como R-000123.
+  code           Int            @unique @default(autoincrement())
+  street         String         @db.VarChar(200)
+  neighborhood   String         @db.VarChar(120)
+  city           String         @db.VarChar(120)
+  referencePoint String?        @map("reference_point") @db.VarChar(200)
+  category       DamageCategory
+  description    String         @db.VarChar(2000)
+  priority       Priority
+  clientName     String         @map("client_name") @db.VarChar(120)
+  clientPhone    String         @map("client_phone") @db.VarChar(20)
+  /// Número de contrato del cliente con la empresa de internet (en mayúsculas).
+  /// NULL solo en reportes creados antes de existir el campo.
+  contractNumber String?        @map("contract_number") @db.VarChar(30)
+  status         ReportStatus   @default(PENDIENTE)
+  assignedToId   String?        @map("assigned_to_id") @db.Uuid
+  createdById    String         @map("created_by_id") @db.Uuid
+  /// Nueva fecha estimada indicada por el técnico al aplazar.
+  rescheduledFor DateTime?      @map("rescheduled_for") @db.Date
+  /// Dirección normalizada (minúsculas, sin tildes) para la búsqueda.
+  searchText     String         @map("search_text") @db.VarChar(700)
+  /// Control de concurrencia optimista: se incrementa en cada cambio.
+  version        Int            @default(0)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  closedAt       DateTime?      @map("closed_at") @db.Timestamptz(3)
+
+  assignedTo  User?        @relation("AssignedReports", fields: [assignedToId], references: [id])
+  createdBy   User         @relation("CreatedReports", fields: [createdById], references: [id])
+  attachments Attachment[]
+  auditLog    AuditLog[]
+
+  @@index([status, createdAt])
+  @@index([assignedToId, status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin, map: "reports_search_text_trgm_idx")
+  @@map("reports")
+}
+
+model Attachment {
+  id           String         @id @default(uuid()) @db.Uuid
+  reportId     String         @map("report_id") @db.Uuid
+  /// Evento de bitácora al que quedó vinculada. NULL = subida pero aún no enviada.
+  auditLogId   BigInt?        @map("audit_log_id")
+  uploadedById String         @map("uploaded_by_id") @db.Uuid
+  kind         AttachmentKind
+  storageKey   String         @unique @map("storage_key") @db.VarChar(255)
+  mimeType     String         @map("mime_type") @db.VarChar(50)
+  sizeBytes    Int            @map("size_bytes")
+  width        Int
+  height       Int
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  report     Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  auditLog   AuditLog? @relation(fields: [auditLogId], references: [id])
+  uploadedBy User      @relation(fields: [uploadedById], references: [id])
+
+  @@index([reportId])
+  @@index([auditLogId])
+  @@map("attachments")
+}
+
+/// Bitácora de auditoría (solo inserciones). También es el historial de cada reporte.
+model AuditLog {
+  id           BigInt        @id @default(autoincrement())
+  actorId      String?       @map("actor_id") @db.Uuid
+  entity       AuditEntity
+  reportId     String?       @map("report_id") @db.Uuid
+  targetUserId String?       @map("target_user_id") @db.Uuid
+  /// Ej.: CREAR, EDITAR, TOMAR, REALIZADO, VERIFICAR, LOGIN_OK... (ver src/domain/labels.ts)
+  action       String        @db.VarChar(40)
+  fromStatus   ReportStatus? @map("from_status")
+  toStatus     ReportStatus? @map("to_status")
+  /// Datos adicionales: motivo, nota, fecha del intento, cambios de campos (antes/después).
+  data         Json?
+  comment      String?       @db.VarChar(1000)
+  ip           String?       @db.VarChar(64)
+  /// Idempotencia: un reintento con el mismo requestId no duplica el cambio.
+  requestId    String?       @unique @map("request_id") @db.VarChar(64)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  actor       User?        @relation("AuditActor", fields: [actorId], references: [id])
+  report      Report?      @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  targetUser  User?        @relation("AuditTargetUser", fields: [targetUserId], references: [id])
+  attachments Attachment[]
+
+  @@index([reportId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+  @@map("audit_log")
+}

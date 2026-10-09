@@ -1,0 +1,15 @@
+node_modules
+.next
+.next-qa
+.git
+.env
+.env.*
+!.env.example
+storage
+storage-test
+storage-qa
+backups
+test-results
+playwright-report
+tests/e2e/fixtures
+*.tsbuildinfo

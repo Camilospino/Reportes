@@ -1,0 +1,14 @@
+# Solo para desarrollo local: PostgreSQL 16 en el puerto 5434.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: reportes
+      POSTGRES_PASSWORD: reportes
+      POSTGRES_DB: reportes
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+volumes:
+  pgdata-dev:

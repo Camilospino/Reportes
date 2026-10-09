@@ -13,6 +13,7 @@ playwright-report/
 .DS_Store
 storage-test/
 .next-qa/
+.next-e2e/
 .env.qa
 storage-qa/
 tests/e2e/fixtures/

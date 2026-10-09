@@ -1,6 +1,7 @@
 node_modules
 .next
 .next-qa
+.next-e2e
 .git
 .env
 .env.*

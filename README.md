@@ -64,7 +64,7 @@ sesión abierta en desarrollo y en QA a la vez. Desde el celular: `http://<IP-de
 | `npm run qa:deploy` / `npm run qa:start` | Subir el código actual a QA y abrirlo en el puerto 3300 |
 | `npm run typecheck` | Verificación de tipos (TypeScript estricto) |
 | `npm test` | Pruebas unitarias (reglas de negocio, validaciones) |
-| `npm run test:e2e` | Pruebas de extremo a extremo en navegador (celular emulado). Requiere `npm run build`. Usa una BD aparte `reportes_test`. Fallan ante cualquier error de consola, violación de CSP o recurso que no cargue |
+| `npm run test:e2e` | Pruebas de extremo a extremo en navegador (celular emulado). Compila en `.next-e2e` (no interfiere con `npm run dev`). Usa una BD aparte `reportes_test`. Fallan ante cualquier error de consola, violación de CSP o recurso que no cargue |
 | `npm run test:integration` | Pruebas de servicios contra `reportes_test` (correr después de `test:e2e`) |
 | `npm run db:migrate` | Crear una migración nueva tras cambiar `prisma/schema.prisma` |
 | `npm run db:seed` | Cargar datos de demostración |

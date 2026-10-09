@@ -3,7 +3,7 @@ import { BASE_URL, TEST_DATABASE_URL, TEST_PORT, TEST_STORAGE_DIR } from "./test
 
 /**
  * Pruebas de extremo a extremo sobre una BD aparte (reportes_test), que se recrea en cada corrida.
- *   npm run build && npm run test:e2e
+ *   npm run test:e2e   (compila en .next-e2e: no toca la compilación de desarrollo ni la de QA)
  */
 export default defineConfig({
   testDir: "tests/e2e",
@@ -23,7 +23,7 @@ export default defineConfig({
     command: `npx next start -p ${TEST_PORT}`,
     url: `${BASE_URL}/login`,
     reuseExistingServer: false,
-    env: { DATABASE_URL: TEST_DATABASE_URL, LOCAL_STORAGE_DIR: TEST_STORAGE_DIR, STORAGE_DRIVER: "local", APP_URL: BASE_URL },
+    env: { NEXT_DIST_DIR: ".next-e2e", DATABASE_URL: TEST_DATABASE_URL, LOCAL_STORAGE_DIR: TEST_STORAGE_DIR, STORAGE_DRIVER: "local", APP_URL: BASE_URL },
     timeout: 60_000,
   },
 });

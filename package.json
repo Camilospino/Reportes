@@ -14,7 +14,7 @@
     "qa:start": "tsx scripts/qa.ts start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "NEXT_DIST_DIR=.next-e2e next build && playwright test",
     "db:up": "docker compose -f docker-compose.dev.yml up -d",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

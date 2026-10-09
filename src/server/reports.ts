@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { AttachmentKind, Prisma, ReportStatus } from "@prisma/client";
 import { EDITABLE_STATUSES, checkTransition, technicianCanSee, type Transition } from "@/domain/report-state";
 import { PRIORITIES, REPORT_STATUSES, type Role } from "@/domain/types";
-import type { ReportInput } from "@/domain/schemas";
+import type { ReportInput, ReportSort } from "@/domain/schemas";
 import { buildSearchText, normalizeForSearch } from "@/domain/text";
 import { bogotaDayStart, bogotaNextDayStart } from "@/lib/dates";
 import { prisma } from "./db";
@@ -120,6 +120,59 @@ export async function updateReport(ctx: Ctx, reportId: string, input: ReportInpu
       { actorId: ctx.actor.id, entity: "REPORT", action: "EDITAR", reportId, data: { changes }, ip: ctx.ip },
       tx,
     );
+  });
+}
+
+/**
+ * Asigna (o quita) el técnico sin editar el resto del reporte. Mismas reglas que updateReport:
+ * solo con el reporte Pendiente (en proceso ya lo tomó un técnico), técnico activo y control de
+ * versión. Queda en la bitácora como una edición del campo "Técnico asignado".
+ */
+export async function assignTechnician(
+  ctx: Ctx,
+  reportId: string,
+  assignedToId: string | null,
+  version: number,
+): Promise<{ version: number }> {
+  if (ctx.actor.role !== "ADMIN") throw forbidden();
+  const current = await prisma.report.findUnique({
+    where: { id: reportId },
+    select: { status: true, version: true, assignedToId: true, assignedTo: { select: { name: true } } },
+  });
+  if (!current) throw notFound("El reporte no existe.");
+  if (current.version !== version) throw conflict();
+  if (current.status !== "PENDIENTE") {
+    throw new AppError(
+      current.status === "EN_PROCESO"
+        ? "No se puede cambiar el técnico mientras el reporte está en proceso."
+        : "Solo se puede asignar técnico a reportes pendientes.",
+    );
+  }
+  if (assignedToId === current.assignedToId) return { version };
+  let toName: string | null = null;
+  if (assignedToId) {
+    await assertActiveTechnician(assignedToId);
+    toName = (await prisma.user.findUnique({ where: { id: assignedToId }, select: { name: true } }))?.name ?? null;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const res = await tx.report.updateMany({
+      where: { id: reportId, version, status: "PENDIENTE" },
+      data: { assignedToId, version: { increment: 1 } },
+    });
+    if (res.count !== 1) throw conflict();
+    await writeAudit(
+      {
+        actorId: ctx.actor.id,
+        entity: "REPORT",
+        action: "EDITAR",
+        reportId,
+        data: { changes: { assignedToId: { from: current.assignedTo?.name ?? null, to: toName } } },
+        ip: ctx.ip,
+      },
+      tx,
+    );
+    return { version: version + 1 };
   });
 }
 
@@ -314,15 +367,23 @@ export type AdminFilters = {
   desde?: string;
   hasta?: string;
   q?: string;
+  orden?: ReportSort;
   page: number;
 };
 
 const isStatus = (v: unknown): v is ReportStatus => REPORT_STATUSES.includes(v as ReportStatus);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function listReportsForAdmin(f: AdminFilters) {
+/** "R-000012", "000012" o "12" → 12 (para buscar por código). */
+function codeFromQuery(q: string): number | null {
+  const m = /^(?:r-?)?0*(\d{1,9})$/i.exec(q.trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** Filtros del listado. `ignoreStatus` sirve para los conteos por estado (respetan todo lo demás). */
+function adminWhere(f: Omit<AdminFilters, "page">, ignoreStatus = false): Prisma.ReportWhereInput {
   const where: Prisma.ReportWhereInput = {};
-  if (isStatus(f.estado)) where.status = f.estado;
+  if (!ignoreStatus && isStatus(f.estado)) where.status = f.estado;
   if (PRIORITIES.includes(f.prioridad as never)) where.priority = f.prioridad as (typeof PRIORITIES)[number];
   if (f.tecnico === "sin") where.assignedToId = null;
   else if (f.tecnico && UUID_RE.test(f.tecnico)) where.assignedToId = f.tecnico;
@@ -333,12 +394,29 @@ export async function listReportsForAdmin(f: AdminFilters) {
     };
   }
   const q = f.q ? normalizeForSearch(f.q) : "";
-  if (q) where.searchText = { contains: q };
+  if (q) {
+    const code = codeFromQuery(q);
+    where.OR = [{ searchText: { contains: q } }, ...(code !== null ? [{ code }] : [])];
+  }
+  return where;
+}
 
+const SORT_ORDER: Record<ReportSort, Prisma.ReportOrderByWithRelationInput[]> = {
+  "creado-desc": [{ createdAt: "desc" }],
+  "creado-asc": [{ createdAt: "asc" }],
+  "codigo-desc": [{ code: "desc" }],
+  "codigo-asc": [{ code: "asc" }],
+  // El enum está ordenado ALTA, MEDIA, BAJA: "desc" (más urgente primero) es orden ascendente del enum.
+  "prioridad-desc": [{ priority: "asc" }, { createdAt: "desc" }],
+  "prioridad-asc": [{ priority: "desc" }, { createdAt: "desc" }],
+};
+
+export async function listReportsForAdmin(f: AdminFilters) {
+  const where = adminWhere(f);
   const [items, total] = await prisma.$transaction([
     prisma.report.findMany({
       where,
-      orderBy: [{ createdAt: "desc" }],
+      orderBy: SORT_ORDER[f.orden ?? "creado-desc"],
       skip: (f.page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
       select: {
@@ -351,12 +429,22 @@ export async function listReportsForAdmin(f: AdminFilters) {
         priority: true,
         status: true,
         createdAt: true,
+        assignedToId: true,
+        version: true,
         assignedTo: { select: { name: true } },
       },
     }),
     prisma.report.count({ where }),
   ]);
   return { items, total, page: f.page, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)) };
+}
+
+/** Conteo por estado con los filtros actuales, salvo el de estado (para las tarjetas del listado). */
+export async function countByStatusForAdmin(f: Omit<AdminFilters, "page">): Promise<Record<ReportStatus, number>> {
+  const rows = await prisma.report.groupBy({ by: ["status"], where: adminWhere(f, true), _count: { _all: true } });
+  const counts = Object.fromEntries(REPORT_STATUSES.map((s) => [s, 0])) as Record<ReportStatus, number>;
+  for (const r of rows) counts[r.status] = r._count._all;
+  return counts;
 }
 
 export async function countByStatus(): Promise<Record<ReportStatus, number>> {

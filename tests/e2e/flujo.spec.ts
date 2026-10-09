@@ -7,15 +7,20 @@ test.describe.serial("Flujo principal", () => {
   test("admin crea un reporte y queda Pendiente", async ({ page }) => {
     await login(page, "admin");
     await page.goto("/admin/reportes/nuevo");
+    // La plantilla llena categoría, prioridad y descripción (con espacios ____ por completar).
+    await page.getByRole("button", { name: /Sin internet/ }).click();
+    await expect(page.getByLabel("Categoría *")).toHaveValue("SIN_SERVICIO");
+    await expect(page.getByRole("button", { name: "Alta", exact: true })).toHaveAttribute("aria-pressed", "true");
     await page.getByLabel("Calle / dirección *").fill("Calle 100 # 20-30");
     await page.getByLabel("Barrio *").fill("Bocagrande");
     await page.getByLabel("Punto de referencia").fill("Edificio gris");
-    await page.getByLabel("Categoría *").selectOption("SIN_SERVICIO");
-    await page.getByLabel("Prioridad *").selectOption("ALTA");
-    await page.getByLabel("Descripción del posible daño *").fill("Sin internet, luz LOS en rojo.");
     await page.getByLabel("Nombre del cliente *").fill("Prueba E2E");
     await page.getByLabel("Teléfono del cliente *").fill("300 000 0000");
-    await page.getByLabel("Número de contrato *").fill("CTG-000999");
+    await page.getByLabel("Número de contrato *").fill("ctg-000999");
+    // Con espacios ____ sin completar no se publica.
+    await page.getByRole("button", { name: "Publicar reporte" }).click();
+    await expect(page.getByText("Faltan: Descripción.")).toBeVisible();
+    await page.getByLabel("Descripción del posible daño *").fill("Sin internet desde ayer. Luces del router: LOS en rojo.");
     await page.getByRole("button", { name: "Publicar reporte" }).click();
     await expect(page.getByText("Reporte creado y publicado como Pendiente.")).toBeVisible();
     await expect(page.locator("main").getByText("Pendiente").first()).toBeVisible();
@@ -112,7 +117,9 @@ test.describe.serial("Flujo principal", () => {
   test("admin rechaza un cierre con comentario y vuelve a Pendiente", async ({ page }) => {
     await login(page, "admin");
     await page.goto("/admin/reportes?estado=REALIZADO");
-    await page.locator("main a", { hasText: "Carrera 3 # 8-100" }).first().click();
+    // Fila → panel lateral → reporte completo.
+    await page.locator("main tr", { hasText: "Carrera 3 # 8-100" }).first().click();
+    await page.getByRole("dialog").getByRole("link", { name: "Abrir reporte completo" }).click();
     await page.getByRole("button", { name: "✖ Rechazar cierre" }).click();
     const confirm = page.getByRole("button", { name: /Confirmar: Rechazar cierre/ });
     await expect(confirm).toBeDisabled(); // comentario obligatorio
@@ -125,9 +132,35 @@ test.describe.serial("Flujo principal", () => {
     await login(page, "admin");
     // "getsemani" sin tilde encuentra el barrio "Getsemaní".
     await page.goto("/admin/reportes?q=getsemani&estado=PENDIENTE");
-    await expect(page.locator("main").getByText(/reportes?$/).first()).toBeVisible();
+    await expect(page.locator("main").getByText(/con los filtros actuales/)).toBeVisible();
     await expect(page.locator("main").getByText("Carrera 10 # 41-60").first()).toBeVisible();
     await expect(page.locator("main").getByText("Carrera 2 # 9-145")).toHaveCount(0);
+  });
+
+  test("lista: filtros al instante y asignar técnico desde el panel", async ({ page }) => {
+    await login(page, "admin");
+    await page.goto("/admin/reportes");
+    // Sin botón "Filtrar": la búsqueda se aplica sola y queda en la URL.
+    await page.getByRole("searchbox", { name: "Buscar reportes" }).fill("pie de la popa");
+    await expect(page).toHaveURL(/q=pie/);
+    await expect(page.locator("main tbody tr")).toHaveCount(1);
+    await expect(page.locator("main tbody tr").first()).toContainText("Pie de la Popa");
+    // Buscar por código.
+    await page.getByRole("searchbox", { name: "Buscar reportes" }).fill("R-000001");
+    await expect(page).toHaveURL(/q=R-000001/);
+    await expect(page.locator("main tbody tr")).toHaveCount(1);
+    await expect(page.locator("main tbody tr").first()).toContainText("Carrera 2 # 9-145");
+    await page.locator("main tbody tr").first().click();
+    const panel = page.getByRole("dialog");
+    await panel.getByLabel("Técnico asignado").selectOption({ label: "Laura Gómez" });
+    await expect(page.getByRole("status").filter({ hasText: "Asignado a Laura Gómez" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+    await expect(page.locator("main tbody tr").first()).toContainText("Laura Gómez");
+    // Deja la semilla como estaba (sin asignar).
+    await page.locator("main tbody tr").first().click();
+    await panel.getByLabel("Técnico asignado").selectOption("");
+    await expect(page.getByRole("status").filter({ hasText: "Sin técnico asignado" })).toBeVisible();
   });
 
   test("admin crea técnico, este cambia la clave temporal al entrar", async ({ page, browser }) => {

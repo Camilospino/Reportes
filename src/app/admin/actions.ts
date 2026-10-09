@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   adminDecisionSchema,
+  assignTechnicianSchema,
   fieldErrors,
   reportInputSchema,
   reportUpdateSchema,
@@ -17,7 +18,7 @@ import {
 import type { ActionResult } from "@/domain/types";
 import { actionContext } from "@/server/action-context";
 import { toActionError } from "@/server/errors";
-import { applyTransition, createReport, updateReport } from "@/server/reports";
+import { applyTransition, assignTechnician, createReport, updateReport } from "@/server/reports";
 import { createTechnician, resetTechnicianPassword, setTechnicianActive } from "@/server/users";
 
 const reportFields = (fd: FormData) => ({
@@ -77,6 +78,20 @@ export async function adminDecisionAction(input: unknown): Promise<ActionResult>
   }
   revalidatePath("/admin", "layout");
   return { ok: true };
+}
+
+/** Asignar o quitar el técnico desde el panel lateral de la lista. Devuelve la nueva versión. */
+export async function assignTechnicianAction(input: unknown): Promise<ActionResult<{ version: number }>> {
+  const ctx = await actionContext("ADMIN");
+  const parsed = assignTechnicianSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Datos no válidos. Recargue la página." };
+  try {
+    const data = await assignTechnician(ctx, parsed.data.reportId, parsed.data.assignedToId, parsed.data.version);
+    revalidatePath("/admin", "layout");
+    return { ok: true, data };
+  } catch (e) {
+    return toActionError(e);
+  }
 }
 
 // ─── Técnicos ──────────────────────────────────────────────────────────

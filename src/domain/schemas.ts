@@ -143,6 +143,16 @@ export const adminDecisionSchema = z
 
 // ─── Listado / filtros ─────────────────────────────────────────────────
 
+export const REPORT_SORTS = [
+  "creado-desc",
+  "creado-asc",
+  "codigo-desc",
+  "codigo-asc",
+  "prioridad-desc",
+  "prioridad-asc",
+] as const;
+export type ReportSort = (typeof REPORT_SORTS)[number];
+
 /** Filtros del listado del admin (vienen de la URL; lo inválido se ignora). */
 export const reportFiltersSchema = z.object({
   estado: z.string().optional(),
@@ -151,7 +161,16 @@ export const reportFiltersSchema = z.object({
   desde: z.string().regex(DATE_RE).optional().catch(undefined),
   hasta: z.string().regex(DATE_RE).optional().catch(undefined),
   q: z.string().trim().max(100).optional().catch(undefined),
+  /** Orden de la tabla: campo y sentido. Por defecto, los más recientes primero. */
+  orden: z.enum(REPORT_SORTS).catch("creado-desc").default("creado-desc"),
   page: z.coerce.number().int().min(1).max(10_000).catch(1).default(1),
+});
+
+/** Asignar o quitar el técnico de un reporte desde la lista (sin editar el resto). */
+export const assignTechnicianSchema = z.object({
+  reportId: uuid,
+  assignedToId: z.union([uuid, z.null()]),
+  version: z.number().int().min(0),
 });
 
 // ─── Usuarios y autenticación ──────────────────────────────────────────

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { prisma } from "@/server/db";
 import { AppError } from "@/server/errors";
-import { applyTransition, createReport, uploadPhoto, type Ctx } from "@/server/reports";
+import { applyTransition, assignTechnician, createReport, uploadPhoto, type Ctx } from "@/server/reports";
 
 /**
  * Reglas críticas verificadas en el SERVIDOR (sin pasar por la interfaz),
@@ -132,5 +132,21 @@ describe("reglas del servidor", () => {
       ["REPROGRAMAR", "APLAZADO", "PENDIENTE"],
     ]);
     expect(log.every((l) => l.actorId)).toBe(true);
+  });
+
+  it("asignar técnico desde la lista: solo en Pendiente, con control de versión y en la bitácora", async () => {
+    const { id } = await newReport();
+    const v0 = (await prisma.report.findUniqueOrThrow({ where: { id } })).version;
+    const { version: v1 } = await assignTechnician(admin, id, t1.actor.id, v0);
+    expect((await prisma.report.findUniqueOrThrow({ where: { id } })).assignedToId).toBe(t1.actor.id);
+    // Versión vieja (otro admin cambió el reporte entre tanto): conflicto, no se pisa.
+    await expect(assignTechnician(admin, id, t2.actor.id, v0)).rejects.toBeInstanceOf(AppError);
+    const edit = await prisma.auditLog.findFirst({ where: { reportId: id, action: "EDITAR" } });
+    expect(edit?.data).toMatchObject({ changes: { assignedToId: { from: null } } });
+    // En proceso ya no se puede cambiar el técnico.
+    await applyTransition(t1, { reportId: id, transition: "TOMAR", requestId: randomUUID() });
+    await expect(assignTechnician(admin, id, t2.actor.id, v1 + 1)).rejects.toThrow(/en proceso/);
+    // Un técnico no puede usarla.
+    await expect(assignTechnician(t1, id, null, v1 + 1)).rejects.toBeInstanceOf(AppError);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminDecisionSchema, outcomeSchema, passwordSchema, phoneSchema, reportInputSchema } from "@/domain/schemas";
+import { adminDecisionSchema, outcomeSchema, panelDecisionSchema, passwordSchema, phoneSchema, reportInputSchema } from "@/domain/schemas";
 import { bogotaDateTimeLocal } from "@/lib/dates";
 
 const ids = { reportId: "11111111-1111-4111-8111-111111111111", requestId: "22222222-2222-4222-8222-222222222222" };
@@ -82,3 +82,18 @@ describe("validación de entradas", () => {
     expect(passwordSchema.safeParse("Segura2026").success).toBe(true);
   });
 });
+
+describe("panelDecisionSchema (bandeja del Panel)", () => {
+  const base = { id: ids.reportId, requestId: ids.requestId };
+  it("la nota es opcional, se recorta y vacía cuenta como sin nota", () => {
+    expect(panelDecisionSchema.parse(base).nota).toBeUndefined();
+    expect(panelDecisionSchema.parse({ ...base, nota: "   " }).nota).toBeUndefined();
+    expect(panelDecisionSchema.parse({ ...base, nota: "  Volver mañana  " }).nota).toBe("Volver mañana");
+  });
+  it("máximo 500 caracteres e id obligatorio", () => {
+    expect(panelDecisionSchema.safeParse({ ...base, nota: "x".repeat(500) }).success).toBe(true);
+    expect(panelDecisionSchema.safeParse({ ...base, nota: "x".repeat(501) }).success).toBe(false);
+    expect(panelDecisionSchema.safeParse({ requestId: ids.requestId }).success).toBe(false);
+  });
+});
+

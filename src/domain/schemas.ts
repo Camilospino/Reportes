@@ -123,6 +123,12 @@ export const technicianSimpleSchema = z.object({
   requestId,
 });
 
+/** Tomar o iniciar desde la pantalla de inicio del técnico. */
+export const reportActionSchema = z.object({ reportId: uuid, requestId });
+
+/** Marcar realizado desde la pantalla de inicio (mismas reglas que el resultado REALIZADO). */
+export const completeSchema = outcomeSchema.options[0].omit({ transition: true });
+
 /** Decisiones del administrador. Rechazar, reprogramar y cancelar exigen comentario. */
 export const adminDecisionSchema = z
   .object({
@@ -140,6 +146,13 @@ export const adminDecisionSchema = z
       });
     }
   });
+
+/** Decisión desde la bandeja del Panel: la nota para el técnico es opcional. */
+export const panelDecisionSchema = z.object({
+  id: uuid,
+  requestId,
+  nota: optionalText(500),
+});
 
 // ─── Listado / filtros ─────────────────────────────────────────────────
 

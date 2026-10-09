@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import {
   adminDecisionSchema,
   assignTechnicianSchema,
+  panelDecisionSchema,
   fieldErrors,
   reportInputSchema,
   reportUpdateSchema,
@@ -17,8 +18,8 @@ import {
 } from "@/domain/schemas";
 import type { ActionResult } from "@/domain/types";
 import { actionContext } from "@/server/action-context";
-import { toActionError } from "@/server/errors";
-import { applyTransition, assignTechnician, createReport, updateReport } from "@/server/reports";
+import { AppError, toActionError } from "@/server/errors";
+import { applyTransition, assignTechnician, createReport, updateReport, type TransitionParams } from "@/server/reports";
 import { createTechnician, resetTechnicianPassword, setTechnicianActive } from "@/server/users";
 
 const reportFields = (fd: FormData) => ({
@@ -139,4 +140,52 @@ export async function resetTechnicianPasswordAction(userId: string): Promise<Tem
   } catch (e) {
     return toActionError(e);
   }
+}
+
+// ─── Bandeja del Panel ─────────────────────────────────────────────────
+// Cada acción vuelve a exigir el rol ADMIN, valida con Zod y delega en applyTransition, que hace
+// la actualización condicionada (estado + versión) y escribe el historial en la misma transacción.
+// Devolver y reprogramar conservan el técnico asignado.
+
+const ALREADY_REVIEWED_MSG = "Este reporte ya fue revisado por otra persona. Se actualizó la bandeja.";
+
+async function panelDecision(
+  input: unknown,
+  transition: TransitionParams["transition"],
+  onlyFrom: TransitionParams["onlyFrom"],
+): Promise<ActionResult> {
+  const ctx = await actionContext("ADMIN");
+  const parsed = panelDecisionSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Datos no válidos." };
+  const { id, requestId, nota } = parsed.data;
+  try {
+    await applyTransition(ctx, { reportId: id, transition, requestId, comment: nota ?? null, onlyFrom });
+  } catch (e) {
+    // 409: el reporte ya no está en el estado esperado (otra pestaña u otro administrador).
+    if (e instanceof AppError && e.status === 409) return { ok: false, error: ALREADY_REVIEWED_MSG };
+    return toActionError(e);
+  }
+  revalidatePath("/admin", "layout"); // Panel y lista de reportes
+  revalidatePath("/tecnico", "layout"); // el reporte vuelve (o sale) de las listas del técnico
+  return { ok: true };
+}
+
+/** Realizado → Verificado. */
+export async function verificarReporte(input: unknown): Promise<ActionResult> {
+  return panelDecision(input, "VERIFICAR", ["REALIZADO"]);
+}
+
+/** Realizado → Pendiente, con el mismo técnico. */
+export async function devolverReporte(input: unknown): Promise<ActionResult> {
+  return panelDecision(input, "RECHAZAR", ["REALIZADO"]);
+}
+
+/** Aplazado o Cliente ausente → Pendiente, con el mismo técnico. */
+export async function reprogramarReporte(input: unknown): Promise<ActionResult> {
+  return panelDecision(input, "REPROGRAMAR", ["APLAZADO", "CLIENTE_AUSENTE"]);
+}
+
+/** Aplazado o Cliente ausente → Cancelado. */
+export async function cancelarReporte(input: unknown): Promise<ActionResult> {
+  return panelDecision(input, "CANCELAR", ["APLAZADO", "CLIENTE_AUSENTE"]);
 }

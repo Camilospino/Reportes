@@ -1,4 +1,4 @@
-import { expect, login, test } from "./helpers";
+import { expect, login, openFromTechnicianHome, test } from "./helpers";
 import { BASE_URL } from "./test-env";
 
 test.describe.serial("Flujo principal", () => {
@@ -29,7 +29,7 @@ test.describe.serial("Flujo principal", () => {
 
   test("REALIZADO sin foto: el botón Enviar está bloqueado", async ({ page }) => {
     await login(page, "tecnico2");
-    await page.getByRole("link", { name: /Calle 100 # 20-30/ }).click();
+    await openFromTechnicianHome(page, "Calle 100 # 20-30");
     await page.getByRole("button", { name: "Tomar reporte" }).click();
     await page.getByRole("button", { name: "✅ Realizado" }).click();
     await expect(page.getByRole("button", { name: "Enviar" })).toBeDisabled();
@@ -44,7 +44,7 @@ test.describe.serial("Flujo principal", () => {
   test("fotos de Android con tipo vacío se aceptan; archivos que no son foto se rechazan", async ({ page }) => {
     const fs = await import("node:fs");
     await login(page, "tecnico2");
-    await page.getByRole("link", { name: /Calle 100 # 20-30/ }).click();
+    await openFromTechnicianHome(page, "Calle 100 # 20-30");
     await page.getByRole("button", { name: "Tomar reporte" }).click();
     await page.getByRole("button", { name: "🚪 Cliente ausente" }).click();
     const picker = page.getByTestId("camera-FACHADA");
@@ -63,7 +63,7 @@ test.describe.serial("Flujo principal", () => {
     await login(page, "tecnico1");
     const start = Date.now();
 
-    await page.getByRole("link", { name: /Calle 100 # 20-30/ }).click();
+    await openFromTechnicianHome(page, "Calle 100 # 20-30");
     await expect(page.getByRole("link", { name: /Abrir en Google Maps/ })).toHaveAttribute("href", /google\.com\/maps/);
     await page.getByRole("button", { name: "Tomar reporte" }).click();
     await page.getByRole("button", { name: "✅ Realizado" }).click();
@@ -71,7 +71,7 @@ test.describe.serial("Flujo principal", () => {
     await expect(page.getByText("✓ Lista")).toBeVisible({ timeout: 20_000 });
     await page.getByLabel("Nota (opcional)").fill("Se cambió el breaker.");
     await page.getByRole("button", { name: "Enviar" }).click();
-    await expect(page.getByText("Resultado enviado. ¡Gracias!")).toBeVisible();
+    await expect(page.getByRole("status").getByText(/^R-\d{6} realizado\. Pasó a Mi historial\.$/)).toBeVisible();
 
     const seconds = (Date.now() - start) / 1000;
     console.log(`Flujo del técnico: ${seconds.toFixed(1)} s (automatizado)`);

@@ -15,7 +15,18 @@ type Mode = "REALIZADO" | "APLAZADO" | "CLIENTE_AUSENTE";
  * Panel de acciones del técnico. Flujo objetivo (< 1 minuto):
  *   Tomar → Realizado → foto (sube sola) → Enviar.
  */
-export function TechActions({ reportId, canTake, isWorking }: { reportId: string; canTake: boolean; isWorking: boolean }) {
+export function TechActions({
+  reportId,
+  reportCode,
+  canTake,
+  isWorking,
+}: {
+  reportId: string;
+  /** Consecutivo del reporte, para el aviso de la pantalla de inicio. */
+  reportCode: number;
+  canTake: boolean;
+  isWorking: boolean;
+}) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode | null>(null);
   const [requestId, setRequestId] = useState("");
@@ -87,7 +98,10 @@ export function TechActions({ reportId, canTake, isWorking }: { reportId: string
         : mode === "APLAZADO"
           ? { transition: mode, reportId, requestId, reason, newDate }
           : { transition: mode, reportId, requestId, attemptedAt, attachmentIds: photos.ids };
-    void call(() => submitOutcomeAction(payload), () => router.push("/tecnico?msg=enviado"));
+    void call(
+      () => submitOutcomeAction(payload),
+      () => router.push(mode === "REALIZADO" ? `/tecnico?msg=realizado&r=${reportCode}` : "/tecnico?msg=enviado"),
+    );
   }
 
   if (canTake) {

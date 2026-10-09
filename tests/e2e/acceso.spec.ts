@@ -1,4 +1,4 @@
-import { expect, login, test } from "./helpers";
+import { expect, login, openFromTechnicianHome, test } from "./helpers";
 import { BASE_URL } from "./test-env";
 
 test.describe("Control de acceso", () => {
@@ -32,6 +32,7 @@ test.describe("Control de acceso", () => {
   test("un técnico no ve reportes asignados a otro técnico", async ({ page }) => {
     await login(page, "tecnico1");
     // Control positivo: sí ve uno libre (si no, la aserción de abajo pasaría con la página vacía).
+    await page.getByRole("tab", { name: /Disponibles/ }).click();
     await expect(page.getByText("Carrera 2 # 9-145")).toBeVisible();
     // El reporte de "Carrera 10 # 41-60" está asignado a tecnico2 (semilla).
     await expect(page.getByText("Carrera 10 # 41-60")).toHaveCount(0);
@@ -49,8 +50,7 @@ test.describe("Control de acceso", () => {
   test("un técnico no puede subir fotos a un reporte que no tiene en proceso", async ({ page }) => {
     await login(page, "tecnico1");
     // Abrir un reporte disponible (no tomado) y tratar de subirle foto vía API.
-    await page.getByRole("link", { name: /Carrera 2 # 9-145/ }).click();
-    await page.waitForURL(/\/tecnico\/reportes\//);
+    await openFromTechnicianHome(page, "Carrera 2 # 9-145");
     const reportId = page.url().split("/").pop()!;
     const res = await page.request.post(`/api/reportes/${reportId}/fotos`, {
       headers: { origin: BASE_URL },

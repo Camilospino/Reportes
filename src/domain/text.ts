@@ -25,3 +25,12 @@ export function googleMapsUrl(r: { street: string; neighborhood: string; city: s
   const query = `${r.street}, ${r.neighborhood}, ${r.city}, Colombia`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
+
+/** Enlace "tel:" con solo dígitos; los celulares colombianos de 10 dígitos llevan +57. */
+export function telHref(phone: string | null | undefined): string | null {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length === 10) return `tel:+57${digits}`;
+  if (digits.length === 12 && digits.startsWith("57")) return `tel:+${digits}`;
+  return `tel:${digits}`;
+}

@@ -13,7 +13,7 @@ export default async function TechnicianLayout({ children }: { children: React.R
           { href: "/tecnico/historial", label: "Mi historial", icon: "history" },
         ]}
       />
-      <main className="mx-auto max-w-2xl space-y-4 px-4 py-5 pb-[calc(110px+env(safe-area-inset-bottom))] md:pb-5">{children}</main>
+      <main className="mx-auto max-w-2xl space-y-4 px-4 py-5 pb-[calc(120px+env(safe-area-inset-bottom))] md:pb-5">{children}</main>
     </>
   );
 }

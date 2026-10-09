@@ -36,3 +36,12 @@ export async function login(page: Page, username: string, password = PASSWORD) {
   await page.getByRole("button", { name: "Ingresar" }).click();
   await expect(page).not.toHaveURL(/\/login/);
 }
+
+/** Desde el inicio del técnico: va a la pestaña, despliega la tarjeta y abre el detalle completo. */
+export async function openFromTechnicianHome(page: Page, street: string, tab: "A mi cargo" | "Disponibles" = "Disponibles") {
+  await page.getByRole("tab", { name: new RegExp(tab) }).click();
+  const card = page.locator("article", { hasText: street });
+  await card.getByRole("button", { expanded: false }).click();
+  await card.getByRole("link", { name: "Ver detalle completo" }).click();
+  await page.waitForURL(/\/tecnico\/reportes\//);
+}

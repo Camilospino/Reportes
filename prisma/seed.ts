@@ -51,6 +51,12 @@ async function main() {
     photos?: { kind: AttachmentKind; label: string; color: string }[];
   };
 
+  /** Fecha del último evento con esa acción (null si no hubo). */
+  const lastAt = (events: Event[], action: string) => {
+    const e = events.findLast((x) => x.action === action);
+    return e ? ago(e.at) : null;
+  };
+
   async function report(
     base: Omit<Prisma.ReportUncheckedCreateInput, "searchText" | "createdById" | "createdAt">,
     createdHoursAgo: number,
@@ -64,6 +70,8 @@ async function main() {
         createdAt: ago(createdHoursAgo),
         version: events.length,
         closedAt: base.status === "VERIFICADO" || base.status === "CANCELADO" ? ago(events.at(-1)?.at ?? 0) : null,
+        startedAt: base.status === "PENDIENTE" ? null : lastAt(events, "TOMAR"),
+        completedAt: base.status === "REALIZADO" || base.status === "VERIFICADO" ? lastAt(events, "REALIZADO") : null,
       },
     });
     await prisma.auditLog.create({

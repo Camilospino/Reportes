@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { $Enums } from "@prisma/client";
 import { ATTACHMENT_KINDS, CATEGORIES, PRIORITIES, REPORT_STATUSES, ROLES } from "@/domain/types";
-import { normalizeForSearch } from "@/domain/text";
-import { bogotaDateString, bogotaDayStart, parseBogotaDateTimeLocal } from "@/lib/dates";
+import { normalizeForSearch, telHref } from "@/domain/text";
+import { bogotaDateString, bogotaDayStart, formatClock, formatShortDateTime, parseBogotaDateTimeLocal } from "@/lib/dates";
 import { check, consume, hit } from "@/server/rate-limit";
 import { generateTempPassword, hashPassword, verifyPassword } from "@/server/password";
 
@@ -66,5 +66,26 @@ describe("contraseñas", () => {
       expect(p).toMatch(/\d/);
       expect(p).not.toMatch(/[0O1lI]/);
     }
+  });
+});
+
+describe("inicio del técnico: formatos", () => {
+  it("telHref deja solo dígitos y agrega +57 a los celulares de 10 dígitos", () => {
+    expect(telHref("321 646-4646")).toBe("tel:+573216464646");
+    expect(telHref("+57 321 646 4646")).toBe("tel:+573216464646");
+    expect(telHref("6056601234")).toBe("tel:+576056601234");
+    expect(telHref("6601234")).toBe("tel:6601234");
+    expect(telHref("")).toBeNull();
+    expect(telHref(null)).toBeNull();
+  });
+
+  it("hora de creación: solo la hora si es de hoy; si no, con fecha corta (hora de Bogotá)", () => {
+    const now = new Date("2026-10-09T15:00:00-05:00");
+    const norm = (s: string) => s.replace(/\s/g, " "); // Intl usa espacios finos
+    expect(norm(formatShortDateTime(new Date("2026-10-09T11:57:00-05:00"), now))).toBe("11:57 a. m.");
+    expect(norm(formatShortDateTime(new Date("2026-10-08T11:57:00-05:00"), now))).toBe("8 oct, 11:57 a. m.");
+    // 23:30 del 8 en Bogotá ya es 9 en UTC: debe contar como "ayer".
+    expect(norm(formatShortDateTime(new Date("2026-10-09T04:30:00Z"), now))).toBe("8 oct, 11:30 p. m.");
+    expect(formatClock(new Date("2026-10-09T20:05:00Z"))).toBe("15:05");
   });
 });

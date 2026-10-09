@@ -8,7 +8,7 @@ import { EDITABLE_STATUSES, checkTransition, technicianCanSee, type Transition }
 import { PRIORITIES, REPORT_STATUSES, type Role } from "@/domain/types";
 import type { ReportInput, ReportSort } from "@/domain/schemas";
 import { buildSearchText, normalizeForSearch } from "@/domain/text";
-import { bogotaDayStart, bogotaNextDayStart } from "@/lib/dates";
+import { bogotaDateString, bogotaDayStart, bogotaNextDayStart } from "@/lib/dates";
 import { prisma } from "./db";
 import { writeAudit } from "./audit";
 import { AppError, conflict, forbidden, isUniqueViolation, notFound } from "./errors";
@@ -188,7 +188,17 @@ export type TransitionParams = {
   data?: Record<string, string>;
   attachmentIds?: string[];
   rescheduledFor?: Date | null;
+  /**
+   * Restricción extra de TOMAR según desde dónde se pide:
+   * - "disponible": "Tomar" en Disponibles; solo si sigue sin técnico.
+   * - "propio": "Iniciar trabajo" de un reporte que el admin le asignó.
+   */
+  scope?: "disponible" | "propio";
+  /** Estados desde los que se permite en este punto de la interfaz (más estricto que la máquina de estados). */
+  onlyFrom?: readonly ReportStatus[];
 };
+
+export const TAKEN_BY_OTHER_MSG = "Otro técnico ya tomó este reporte.";
 
 const ATTACHMENT_KIND_FOR: Partial<Record<Transition, AttachmentKind>> = {
   REALIZADO: "EVIDENCIA",
@@ -212,6 +222,14 @@ export async function applyTransition(ctx: Ctx, p: TransitionParams): Promise<vo
   });
   if (!report) throw notFound("El reporte no existe.");
 
+  if (p.scope === "disponible" && (report.status !== "PENDIENTE" || report.assignedToId !== null)) {
+    throw conflict(TAKEN_BY_OTHER_MSG);
+  }
+  if (p.scope === "propio" && report.assignedToId !== ctx.actor.id) {
+    throw forbidden("Este reporte no está a su cargo.");
+  }
+  if (p.onlyFrom && !p.onlyFrom.includes(report.status)) throw conflict();
+
   const check = checkTransition(p.transition, report, ctx.actor);
   if (!check.ok) throw new AppError(check.reason, 409);
 
@@ -234,19 +252,23 @@ export async function applyTransition(ctx: Ctx, p: TransitionParams): Promise<vo
       // Actualización condicionada: si otro usuario cambió el reporte entre la lectura
       // y este punto (p. ej. dos técnicos tocan "Tomar" a la vez), no se actualiza nada.
       const res = await tx.report.updateMany({
-        where: { id: p.reportId, status: report.status, version: report.version },
+        where: { id: p.reportId, status: report.status, assignedToId: report.assignedToId, version: report.version },
         data: {
           status: to,
           assignedToId,
           version: { increment: 1 },
           closedAt: to === "VERIFICADO" || to === "CANCELADO" ? new Date() : null,
+          // Inicio: al pasar a En proceso; se borra si vuelve a Pendiente (liberar, rechazar, reprogramar).
+          startedAt: to === "EN_PROCESO" ? new Date() : to === "PENDIENTE" ? null : undefined,
+          // Cierre del técnico: al marcar Realizado; se conserva al verificar y se borra si se reabre.
+          completedAt: to === "REALIZADO" ? new Date() : to === "VERIFICADO" ? undefined : null,
           ...(p.transition === "APLAZADO" ? { rescheduledFor: p.rescheduledFor ?? null } : {}),
         },
       });
       if (res.count !== 1) {
         throw conflict(
-          p.transition === "TOMAR"
-            ? "Otro técnico tomó este reporte hace un momento."
+          p.transition === "TOMAR" && report.assignedToId === null
+            ? TAKEN_BY_OTHER_MSG
             : "El reporte cambió de estado. Recargue la página e intente de nuevo.",
         );
       }
@@ -478,15 +500,61 @@ export function listAwaitingReview(limit = 10) {
   });
 }
 
+/** Estados que esperan una decisión del administrador (bandeja del Panel). */
+export const REVIEW_STATUSES = ["REALIZADO", "APLAZADO", "CLIENTE_AUSENTE"] as const satisfies readonly ReportStatus[];
+
+/** Bandeja del Panel: reportes por revisar, del cambio más reciente al más antiguo. */
+export function listReviewInbox() {
+  return prisma.report.findMany({
+    where: { status: { in: [...REVIEW_STATUSES] } },
+    orderBy: [{ updatedAt: "desc" }, { code: "desc" }],
+    select: {
+      id: true,
+      code: true,
+      street: true,
+      neighborhood: true,
+      city: true,
+      category: true,
+      priority: true,
+      status: true,
+      updatedAt: true,
+      createdAt: true,
+      clientName: true,
+      clientPhone: true,
+      assignedTo: { select: { name: true } },
+    },
+  });
+}
+
+/** Historial de todos los reportes de la bandeja en UNA consulta (sin N+1); lo más antiguo primero. */
+export function listReviewInboxHistory() {
+  return prisma.auditLog.findMany({
+    where: { entity: "REPORT", report: { status: { in: [...REVIEW_STATUSES] } } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      reportId: true,
+      action: true,
+      toStatus: true,
+      comment: true,
+      data: true,
+      createdAt: true,
+      actor: { select: { name: true } },
+    },
+  });
+}
+
 /** Vista principal del técnico: sus reportes activos + los disponibles (paginados). */
 export async function listForTechnician(technicianId: string, page: number) {
+  const today = bogotaDateString();
   const availableWhere: Prisma.ReportWhereInput = { status: "PENDIENTE", assignedToId: null };
-  const [mine, available, availableTotal] = await prisma.$transaction([
+  const [mine, available, availableTotal, doneToday] = await prisma.$transaction([
     prisma.report.findMany({
       where: { assignedToId: technicianId, status: { in: ["EN_PROCESO", "PENDIENTE"] } },
       // EN_PROCESO va primero: es lo que el técnico tiene entre manos.
       orderBy: [{ status: "desc" }, { priority: "asc" }, { createdAt: "asc" }],
-      select: listSelect,
+      // El teléfono solo va en los suyos (botón "Llamar"); los disponibles no lo necesitan.
+      select: { ...listSelect, clientPhone: true },
     }),
     prisma.report.findMany({
       where: availableWhere,
@@ -496,8 +564,19 @@ export async function listForTechnician(technicianId: string, page: number) {
       select: listSelect,
     }),
     prisma.report.count({ where: availableWhere }),
+    // "Hechos hoy": fecha de cierre del técnico dentro de hoy en Bogotá (00:00 a 23:59:59.999).
+    prisma.report.count({
+      where: { assignedToId: technicianId, completedAt: { gte: bogotaDayStart(today), lt: bogotaNextDayStart(today) } },
+    }),
   ]);
-  return { mine, available, page, pageCount: Math.max(1, Math.ceil(availableTotal / PAGE_SIZE)), availableTotal };
+  return {
+    mine,
+    available,
+    page,
+    pageCount: Math.max(1, Math.ceil(availableTotal / PAGE_SIZE)),
+    availableTotal,
+    doneToday,
+  };
 }
 
 /** Detalle completo con historial y fotos (las fotos pendientes de envío no se muestran). */

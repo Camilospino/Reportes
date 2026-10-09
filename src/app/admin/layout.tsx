@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/app-header";
 import { requireRole } from "@/server/session";
+import { AdminMain } from "./admin-main";
 
 /**
  * Layout del administrador. requireRole también se llama en CADA página y acción:
@@ -19,7 +20,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           { href: "/admin/usuarios", label: "Técnicos", icon: "users" },
         ]}
       />
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-5 pb-[calc(110px+env(safe-area-inset-bottom))] md:pb-5">{children}</main>
+      <AdminMain>{children}</AdminMain>
     </>
   );
 }

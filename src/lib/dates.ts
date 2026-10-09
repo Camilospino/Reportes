@@ -16,6 +16,21 @@ const dateFmt = new Intl.DateTimeFormat("es-CO", { timeZone: TIME_ZONE, dateStyl
 const dateOnlyFmt = new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", dateStyle: "medium" });
 
 export const formatDateTime = (d: Date | string) => dateTimeFmt.format(new Date(d));
+
+const timeFmt = new Intl.DateTimeFormat("es-CO", { timeZone: TIME_ZONE, hour: "numeric", minute: "2-digit" });
+const dayMonthFmt = new Intl.DateTimeFormat("es-CO", { timeZone: TIME_ZONE, day: "numeric", month: "short" });
+const clockFmt = new Intl.DateTimeFormat("es-CO", { timeZone: TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+/** "11:57 a. m." si es de hoy; si no, "8 oct, 11:57 a. m." (hora de Bogotá). */
+export function formatShortDateTime(d: Date | string, now: Date = new Date()): string {
+  const date = new Date(d);
+  const time = timeFmt.format(date);
+  if (bogotaDateString(date) === bogotaDateString(now)) return time;
+  return `${dayMonthFmt.format(date).replace(/\sde\s/, " ").replace(/\.$/, "")}, ${time}`;
+}
+
+/** "HH:MM" en 24 horas, hora de Bogotá. */
+export const formatClock = (d: Date) => clockFmt.format(d);
 export const formatDate = (d: Date | string) => dateFmt.format(new Date(d));
 export const formatDateOnly = (d: Date | string) => dateOnlyFmt.format(new Date(d));
 

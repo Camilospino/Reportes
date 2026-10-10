@@ -36,6 +36,7 @@ export async function submitOutcomeAction(input: unknown): Promise<ActionResult>
           ...o,
           data: o.note ? { nota: o.note } : undefined,
           attachmentIds: o.attachmentIds,
+          equipment: o.equipment,
         });
         break;
       case "APLAZADO":
@@ -95,7 +96,10 @@ export async function iniciarReporte(input: unknown): Promise<ActionResult> {
   return run({ ...parsed.data, transition: "TOMAR", scope: "propio" });
 }
 
-/** "Marcar realizado": solo el técnico a cargo y En proceso. Exige foto de evidencia; la nota es opcional. */
+/**
+ * "Marcar realizado": solo el técnico a cargo y En proceso. Exige foto de evidencia; la nota es opcional.
+ * En instalaciones y retiros también el cierre de cada equipo (serial, o recibido y estado).
+ */
 export async function marcarRealizado(input: unknown): Promise<ActionResult> {
   const parsed = completeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Revise los datos.", fieldErrors: fieldErrors(parsed.error) };
@@ -106,5 +110,6 @@ export async function marcarRealizado(input: unknown): Promise<ActionResult> {
     transition: "REALIZADO",
     data: o.note ? { nota: o.note } : undefined,
     attachmentIds: o.attachmentIds,
+    equipment: o.equipment,
   });
 }

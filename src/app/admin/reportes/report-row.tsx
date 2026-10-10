@@ -1,5 +1,5 @@
 import { PRIORITY_LABEL, STATUS_LABEL } from "@/domain/labels";
-import type { DamageCategory, Priority, ReportStatus } from "@/domain/types";
+import type { OrderType, Priority, ReportStatus } from "@/domain/types";
 
 /** Fila de la lista de reportes (lo que necesitan la tabla y el panel lateral). */
 export type ReportRow = {
@@ -8,7 +8,9 @@ export type ReportRow = {
   street: string;
   neighborhood: string;
   city: string;
-  category: DamageCategory;
+  type: OrderType;
+  /** Categoría (daño), plan (instalación) o motivo (retiro). */
+  summary: string;
   priority: Priority;
   status: ReportStatus;
   assignedToId: string | null;
@@ -16,6 +18,11 @@ export type ReportRow = {
   version: number;
   createdDay: string;
   createdTime: string;
+  /** Para la etiqueta de plazo. */
+  createdAt: Date;
+  dueAt: Date;
+  warnFromHours: number;
+  completedAt: Date | null;
 };
 
 /** Colores por estado: pastilla (fondo/texto) y punto. Todos con contraste ≥ 4.5:1. */

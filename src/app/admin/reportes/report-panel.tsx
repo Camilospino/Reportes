@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
-import { CATEGORY_LABEL, reportCode } from "@/domain/labels";
+import { reportCode } from "@/domain/labels";
 import { availableTransitions } from "@/domain/report-state";
+import { PlazoTag } from "@/components/plazo-tag";
+import { TypeTag } from "@/components/type-tag";
 import { PriorityBars, STATUS_COLORS, StatusPill, type ReportRow } from "./report-row";
 
 export type AdminTransition = "VERIFICAR" | "RECHAZAR" | "REPROGRAMAR" | "CANCELAR";
@@ -43,12 +45,14 @@ const DECISIONS: Record<AdminTransition, { label: string; prompt: string; requir
  */
 export function ReportPanel({
   row,
+  now,
   technicians,
   onClose,
   onDecide,
   onAssign,
 }: {
   row: ReportRow;
+  now: number;
   technicians: { id: string; name: string }[];
   onClose: () => void;
   /** Devuelve el mensaje de error, o null si se guardó. */
@@ -144,6 +148,10 @@ export function ReportPanel({
 
         <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
           <div>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              <TypeTag type={row.type} />
+              <PlazoTag order={row} now={now} />
+            </div>
             <p className="text-xl leading-tight font-extrabold text-[#0F172A]">{row.street}</p>
             <p className="text-sm text-[#64748B]">
               {row.neighborhood} · {row.city}
@@ -151,8 +159,8 @@ export function ReportPanel({
           </div>
 
           <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2.5 text-sm">
-            <dt className="font-semibold text-[#64748B]">Categoría</dt>
-            <dd className="text-[#0F172A]">{CATEGORY_LABEL[row.category]}</dd>
+            <dt className="font-semibold text-[#64748B]">{row.type === "DANO" ? "Categoría" : "Detalle"}</dt>
+            <dd className="text-[#0F172A]">{row.summary}</dd>
             <dt className="font-semibold text-[#64748B]">Prioridad</dt>
             <dd>
               <PriorityBars priority={row.priority} />

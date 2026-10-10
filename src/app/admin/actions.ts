@@ -9,25 +9,46 @@ import { redirect } from "next/navigation";
 import {
   adminDecisionSchema,
   assignTechnicianSchema,
+  deadlineConfigSchema,
   panelDecisionSchema,
   fieldErrors,
+  reportEditSchema,
   reportInputSchema,
-  reportUpdateSchema,
   technicianCreateSchema,
   userIdSchema,
+  versionSchema,
 } from "@/domain/schemas";
 import type { ActionResult } from "@/domain/types";
 import { actionContext } from "@/server/action-context";
 import { AppError, toActionError } from "@/server/errors";
+import { saveDeadlineConfig } from "@/server/deadline-config";
 import { applyTransition, assignTechnician, createReport, updateReport, type TransitionParams } from "@/server/reports";
 import { createTechnician, resetTechnicianPassword, setTechnicianActive } from "@/server/users";
 
+/** Equipos: llegan como JSON en un campo oculto (lista que el formulario arma y edita). */
+function equipmentField(fd: FormData): unknown {
+  const raw = fd.get("equipment");
+  if (typeof raw !== "string" || raw === "") return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Campos del formulario; los de otros tipos se ignoran al validar (Zod descarta lo que sobra). */
 const reportFields = (fd: FormData) => ({
+  type: fd.get("type") ?? undefined,
   street: fd.get("street"),
   neighborhood: fd.get("neighborhood"),
   referencePoint: fd.get("referencePoint") ?? undefined,
-  category: fd.get("category"),
-  description: fd.get("description"),
+  category: fd.get("category") ?? undefined,
+  description: fd.get("description") ?? undefined,
+  plan: fd.get("plan") ?? undefined,
+  suggestedDate: fd.get("suggestedDate") ?? undefined,
+  withdrawalReason: fd.get("withdrawalReason") ?? undefined,
+  withdrawalReasonOther: fd.get("withdrawalReasonOther") ?? undefined,
+  equipment: equipmentField(fd),
   priority: fd.get("priority"),
   clientName: fd.get("clientName"),
   clientPhone: fd.get("clientPhone"),
@@ -55,11 +76,12 @@ export async function updateReportAction(
   fd: FormData,
 ): Promise<ActionResult> {
   const ctx = await actionContext("ADMIN");
-  const parsed = reportUpdateSchema.safeParse({ ...reportFields(fd), version: fd.get("version") });
+  const parsed = reportEditSchema.safeParse(reportFields(fd));
+  const version = versionSchema.safeParse(fd.get("version"));
   if (!parsed.success) return { ok: false, error: "Revise los campos marcados.", fieldErrors: fieldErrors(parsed.error) };
-  const { version, ...input } = parsed.data;
+  if (!version.success) return { ok: false, error: "Recargue la página e intente de nuevo." };
   try {
-    await updateReport(ctx, reportId, input, version);
+    await updateReport(ctx, reportId, parsed.data, version.data);
   } catch (e) {
     return toActionError(e);
   }
@@ -89,10 +111,27 @@ export async function assignTechnicianAction(input: unknown): Promise<ActionResu
   try {
     const data = await assignTechnician(ctx, parsed.data.reportId, parsed.data.assignedToId, parsed.data.version);
     revalidatePath("/admin", "layout");
+    revalidatePath("/tecnico", "layout"); // la orden aparece (o sale) de las listas de los técnicos
     return { ok: true, data };
   } catch (e) {
     return toActionError(e);
   }
+}
+
+// ─── Ajustes → Plazos ──────────────────────────────────────────────────
+
+/** Guarda el plazo y el aviso de cada tipo. Solo afecta a las órdenes que se creen después. */
+export async function saveDeadlineConfigAction(input: unknown): Promise<ActionResult> {
+  await actionContext("ADMIN");
+  const parsed = deadlineConfigSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Revise los valores." };
+  try {
+    await saveDeadlineConfig(parsed.data);
+  } catch (e) {
+    return toActionError(e);
+  }
+  revalidatePath("/admin/ajustes");
+  return { ok: true };
 }
 
 // ─── Técnicos ──────────────────────────────────────────────────────────
@@ -142,7 +181,7 @@ export async function resetTechnicianPasswordAction(userId: string): Promise<Tem
   }
 }
 
-// ─── Bandeja del Panel ─────────────────────────────────────────────────
+// ─── Panel de prioridades ──────────────────────────────────────────────
 // Cada acción vuelve a exigir el rol ADMIN, valida con Zod y delega en applyTransition, que hace
 // la actualización condicionada (estado + versión) y escribe el historial en la misma transacción.
 // Devolver y reprogramar conservan el técnico asignado.
@@ -185,7 +224,7 @@ export async function reprogramarReporte(input: unknown): Promise<ActionResult> 
   return panelDecision(input, "REPROGRAMAR", ["APLAZADO", "CLIENTE_AUSENTE"]);
 }
 
-/** Aplazado o Cliente ausente → Cancelado. */
+/** Pendiente, En proceso, Aplazado o Cliente ausente → Cancelado (los estados que permite la máquina de estados). */
 export async function cancelarReporte(input: unknown): Promise<ActionResult> {
-  return panelDecision(input, "CANCELAR", ["APLAZADO", "CLIENTE_AUSENTE"]);
+  return panelDecision(input, "CANCELAR", ["PENDIENTE", "EN_PROCESO", "APLAZADO", "CLIENTE_AUSENTE"]);
 }

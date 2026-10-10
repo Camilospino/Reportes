@@ -5,10 +5,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { Check, Search, TriangleAlert } from "lucide-react";
 import { Pagination } from "@/components/pagination";
 import { initials } from "@/components/header-nav";
-import { CATEGORY_LABEL, PRIORITY_LABEL, STATUS_LABEL, reportCode } from "@/domain/labels";
+import { PLAZO_STYLE, PlazoTag } from "@/components/plazo-tag";
+import { TYPE_STYLE, TypeTag } from "@/components/type-tag";
+import { ORDER_TYPE_SLUG, PRIORITY_LABEL, STATUS_LABEL, reportCode } from "@/domain/labels";
 import type { ReportSort } from "@/domain/schemas";
 import { RULES } from "@/domain/report-state";
-import { PRIORITIES, REPORT_STATUSES, type Priority, type ReportStatus } from "@/domain/types";
+import { ORDER_TYPES, PRIORITIES, REPORT_STATUSES, type OrderType, type Priority, type ReportStatus } from "@/domain/types";
+import { NIVELES_PLAZO, NIVEL_LABEL, type NivelPlazo } from "@/lib/plazo";
 import { NETWORK_ERROR_MSG, newId, withRetry } from "@/lib/client-utils";
 import { adminDecisionAction, assignTechnicianAction } from "../actions";
 import { ReportPanel, type AdminTransition } from "./report-panel";
@@ -23,8 +26,18 @@ type Filters = {
   desde?: string;
   hasta?: string;
   q?: string;
+  tipo?: string;
+  plazo?: string;
   orden: ReportSort;
 };
+
+const DEFAULT_SORT: ReportSort = "vence-asc";
+const TYPE_TABS: { slug?: string; label: string; type?: OrderType }[] = [
+  { label: "Todos" },
+  { slug: ORDER_TYPE_SLUG.DANO, label: "Daños", type: "DANO" },
+  { slug: ORDER_TYPE_SLUG.INSTALACION, label: "Instalaciones", type: "INSTALACION" },
+  { slug: ORDER_TYPE_SLUG.RETIRO, label: "Retiros", type: "RETIRO" },
+];
 
 type Override = { status?: ReportStatus; assignedToId?: string | null; assignedName?: string | null };
 type Toast = { text: string; error?: boolean; key: number };
@@ -36,6 +49,9 @@ type Toast = { text: string; error?: boolean; key: number };
 export function ReportsBrowser({
   rows,
   counts,
+  typeCounts,
+  levelCounts,
+  now,
   total,
   page,
   pageCount,
@@ -44,6 +60,10 @@ export function ReportsBrowser({
 }: {
   rows: ReportRow[];
   counts: Record<ReportStatus, number>;
+  typeCounts: Record<OrderType, number>;
+  levelCounts: Record<NivelPlazo, number>;
+  /** Hora del servidor al pintar (las etiquetas de plazo se recalculan solas cada minuto). */
+  now: number;
   total: number;
   page: number;
   pageCount: number;
@@ -70,7 +90,7 @@ export function ReportsBrowser({
   function setParams(patch: Partial<Record<keyof Filters, string | undefined>>) {
     const sp = new URLSearchParams();
     const next = { ...filters, ...patch };
-    for (const [k, v] of Object.entries(next)) if (v && !(k === "orden" && v === "creado-desc")) sp.set(k, v);
+    for (const [k, v] of Object.entries(next)) if (v && !(k === "orden" && v === DEFAULT_SORT)) sp.set(k, v);
     const qs = sp.toString();
     startNavigation(() => router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false }));
   }
@@ -88,7 +108,9 @@ export function ReportsBrowser({
     return () => clearTimeout(t);
   }, [toast]);
 
-  const hasFilters = Boolean(filters.estado || filters.prioridad || filters.tecnico || filters.desde || filters.hasta || filters.q);
+  const hasFilters = Boolean(
+    filters.estado || filters.prioridad || filters.tecnico || filters.desde || filters.hasta || filters.q || filters.tipo || filters.plazo,
+  );
   const view = rows.map((r) => ({ ...r, ...overrides[r.id] }));
   // Si tras un cambio la fila deja de cumplir el filtro (p. ej. verificar con "Realizado" activo),
   // el panel sigue abierto con la última versión conocida en vez de cerrarse solo.
@@ -104,9 +126,11 @@ export function ReportsBrowser({
     startNavigation(() => router.replace(pathname, { scroll: false }));
   }
 
-  function sortBy(field: "codigo" | "prioridad" | "creado") {
+  function sortBy(field: "codigo" | "prioridad" | "creado" | "vence") {
     const [current, dir] = filters.orden.split("-") as [string, "asc" | "desc"];
-    const next = current === field && dir === "desc" ? "asc" : "desc";
+    // "Vence" empieza por lo más próximo (asc); los demás, por lo más reciente o urgente (desc).
+    const first = field === "vence" ? "asc" : "desc";
+    const next = current === field ? (dir === "asc" ? "desc" : "asc") : first;
     setParams({ orden: `${field}-${next}` });
   }
 
@@ -174,6 +198,7 @@ export function ReportsBrowser({
   }
 
   const allCount = REPORT_STATUSES.reduce((n, s) => n + counts[s], 0);
+  const allTypes = ORDER_TYPES.reduce((n, t) => n + typeCounts[t], 0);
   const sortState = (field: string): "ascending" | "descending" | "none" => {
     const [f, d] = filters.orden.split("-");
     return f === field ? (d === "asc" ? "ascending" : "descending") : "none";
@@ -190,6 +215,29 @@ export function ReportsBrowser({
           {hasFilters ? " con los filtros actuales" : ""}
         </p>
       </header>
+
+      {/* 0. Pestañas por tipo de orden (?tipo=). El número respeta los demás filtros. */}
+      <div role="tablist" aria-label="Tipo de orden" className="flex gap-1 overflow-x-auto rounded-xl border border-[#E2E8F0] bg-white p-1">
+        {TYPE_TABS.map((t) => {
+          const active = (filters.tipo ?? undefined) === t.slug;
+          return (
+            <button
+              key={t.label}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setParams({ tipo: t.slug })}
+              className={`flex h-10 shrink-0 items-center gap-2 rounded-lg px-3.5 text-sm font-bold whitespace-nowrap ${
+                active ? "bg-[#0F172A] text-white" : "text-[#475569] hover:bg-[#F1F5F9]"
+              }`}
+            >
+              {t.type ? <TypeIcon type={t.type} active={active} /> : null}
+              {t.label}
+              <span className={`text-xs tabular-nums ${active ? "text-[#E2E8F0]" : "text-[#64748B]"}`}>{t.type ? typeCounts[t.type] : allTypes}</span>
+            </button>
+          );
+        })}
+      </div>
 
       {/* 1. Tarjetas de estado (también filtran). El número respeta los demás filtros. */}
       <div className="grid grid-cols-2 gap-2.5 min-[900px]:grid-cols-4" role="group" aria-label="Filtrar por estado">
@@ -247,6 +295,26 @@ export function ReportsBrowser({
             );
           })}
         </div>
+        <div className="flex flex-wrap rounded-[9px] bg-[#F1F5F9] p-[3px]" role="group" aria-label="Plazo">
+          {([undefined, ...NIVELES_PLAZO] as (NivelPlazo | undefined)[]).map((n) => {
+            const on = filters.plazo === n;
+            return (
+              <button
+                key={n ?? "todos"}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setParams({ plazo: n })}
+                className={`flex h-[34px] items-center gap-1.5 rounded-[7px] px-2.5 text-sm font-semibold whitespace-nowrap ${
+                  on ? "bg-white text-[#0F172A] shadow-[0_1px_3px_rgba(15,23,42,.12)]" : "text-[#475569] hover:text-[#0F172A]"
+                }`}
+              >
+                {n ? <span className="size-2 rounded-full" style={{ background: PLAZO_STYLE[n].icon }} aria-hidden /> : null}
+                {n ? NIVEL_LABEL[n] : "Todo plazo"}
+                {n ? <span className="text-xs text-[#64748B] tabular-nums">{levelCounts[n]}</span> : null}
+              </button>
+            );
+          })}
+        </div>
         <select aria-label="Técnico" value={filters.tecnico ?? ""} onChange={(e) => setParams({ tecnico: e.target.value || undefined })} className={control}>
           <option value="">Todos los técnicos</option>
           <option value="sin">Sin asignar</option>
@@ -287,12 +355,13 @@ export function ReportsBrowser({
             ) : null}
           </div>
         ) : (
-          <table className="w-full min-w-[1120px] border-collapse text-left">
+          <table className="w-full min-w-[1240px] border-collapse text-left">
             <thead>
               <tr className="h-11 bg-[#F8FAFC] text-xs font-bold tracking-[.4px] text-[#64748B] uppercase">
                 <SortHeader label="Código" state={sortState("codigo")} onClick={() => sortBy("codigo")} />
                 <th className="px-[18px]">Dirección</th>
-                <th className="px-[18px]">Categoría</th>
+                <th className="px-[18px]">Tipo</th>
+                <SortHeader label="Plazo" state={sortState("vence")} onClick={() => sortBy("vence")} />
                 <SortHeader label="Prioridad" state={sortState("prioridad")} onClick={() => sortBy("prioridad")} />
                 <th className="px-[18px]">Estado</th>
                 <th className="px-[18px]">Técnico</th>
@@ -331,7 +400,13 @@ export function ReportsBrowser({
                       {r.neighborhood} · {r.city}
                     </p>
                   </td>
-                  <td className="px-[18px] py-3.5 text-sm text-[#334155]">{CATEGORY_LABEL[r.category]}</td>
+                  <td className="max-w-[220px] px-[18px] py-3.5">
+                    <TypeTag type={r.type} />
+                    <p className="mt-1 truncate text-[13px] text-[#334155]">{r.summary}</p>
+                  </td>
+                  <td className="px-[18px] py-3.5">
+                    <PlazoTag order={r} now={now} />
+                  </td>
                   <td className="px-[18px] py-3.5">
                     <PriorityBars priority={r.priority} />
                   </td>
@@ -357,7 +432,7 @@ export function ReportsBrowser({
         page={page}
         pageCount={pageCount}
         basePath={pathname}
-        params={{ ...filters, orden: filters.orden === "creado-desc" ? undefined : filters.orden }}
+        params={{ ...filters, orden: filters.orden === DEFAULT_SORT ? undefined : filters.orden }}
       />
 
       {/* 4. Panel de detalle */}
@@ -365,6 +440,7 @@ export function ReportsBrowser({
         <ReportPanel
           key={openRow.id}
           row={openRow}
+          now={now}
           technicians={technicians}
           onClose={closePanel}
           onDecide={(t, comment) => decide(openRow, t, comment)}
@@ -388,6 +464,11 @@ export function ReportsBrowser({
       ) : null}
     </div>
   );
+}
+
+function TypeIcon({ type, active }: { type: OrderType; active: boolean }) {
+  const { Icon, text } = TYPE_STYLE[type];
+  return <Icon size={16} strokeWidth={2.4} aria-hidden style={{ color: active ? "#FFFFFF" : text }} />;
 }
 
 function SortHeader({ label, state, onClick }: { label: string; state: "ascending" | "descending" | "none"; onClick: () => void }) {

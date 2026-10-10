@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { DM_Sans } from "next/font/google";
-import { Bell, Wrench } from "lucide-react";
+import { Wrench } from "lucide-react";
+import type { NotificationSummary } from "@/server/notifications";
 import { HeaderNav, NewReportButton, type NavLink } from "./header-nav";
 import { mobileFont } from "./mobile-font";
 import { MobileBottomNav } from "./mobile-nav";
+import { NotificationBell } from "./notification-bell";
 import { UserMenu } from "./user-menu";
 
 // Se descarga al compilar y se sirve desde la propia app (la CSP solo permite fuentes de 'self').
@@ -19,12 +21,15 @@ export function AppHeader({
   links,
   home,
   newReportHref,
+  notifications,
 }: {
   userName: string;
   links: NavLink[];
   home: string;
   /** Solo el administrador crea reportes. */
   newReportHref?: string;
+  /** Avisos de plazo del usuario (campanita). */
+  notifications: NotificationSummary;
 }) {
   return (
     <>
@@ -46,35 +51,22 @@ export function AppHeader({
 
         {newReportHref ? <NewReportButton href={newReportHref} /> : null}
 
-        {/* TODO: la app aún no tiene notificaciones. Cuando existan, abrir aquí la lista y mostrar el
-            punto rojo (pasar `unread`) solo si hay pendientes. */}
-        <button
-          type="button"
-          aria-label="Notificaciones"
-          className="relative flex size-11 shrink-0 items-center justify-center rounded-full border border-[#E2E8F0] bg-white text-[#334155] hover:bg-[#F8FAFC]"
-        >
-          <Bell size={20} strokeWidth={2} aria-hidden />
-          <UnreadDot unread={false} />
-        </button>
+        <NotificationBell initial={notifications} />
 
         <UserMenu userName={userName} />
       </header>
 
       {/* Celular: encabezado simple; el usuario y "Salir" están en la pestaña Cuenta. */}
-      <div className={`${mobileFont.className} flex items-center px-5 pt-[22px] pb-3.5 md:hidden`}>
-        <Link href={home} className="flex min-h-11 items-center gap-3" aria-label="Reportes de daños — inicio">
-          <span className="flex size-[38px] items-center justify-center rounded-xl bg-[#2563EB] text-white">
+      <div className={`${mobileFont.className} flex items-center justify-between gap-3 px-5 pt-[22px] pb-3.5 md:hidden`}>
+        <Link href={home} className="flex min-h-11 min-w-0 items-center gap-3" aria-label="Reportes de daños — inicio">
+          <span className="flex size-[38px] shrink-0 items-center justify-center rounded-xl bg-[#2563EB] text-white">
             <Wrench size={20} strokeWidth={2} aria-hidden />
           </span>
-          <span className="text-[17px] font-extrabold text-[#0F172A]">Reportes de daños</span>
+          <span className="truncate text-[17px] font-extrabold text-[#0F172A]">Reportes de daños</span>
         </Link>
+        <NotificationBell initial={notifications} />
       </div>
       <MobileBottomNav links={links} newReportHref={newReportHref} userName={userName} />
     </>
   );
-}
-
-function UnreadDot({ unread }: { unread: boolean }) {
-  if (!unread) return null;
-  return <span className="absolute top-2 right-2 size-[9px] rounded-full bg-[#EF4444] ring-2 ring-white" aria-hidden />;
 }

@@ -13,14 +13,26 @@ import {
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, LoaderCircle, Navigation, Phone, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, LoaderCircle, Navigation, Phone, RefreshCw } from "lucide-react";
 import { Alert } from "@/components/alert";
+import {
+  EquipmentClosing,
+  closingPayload,
+  closingProblem,
+  initialClosing,
+  type ClosingEquipment,
+  type ClosingValue,
+} from "@/components/equipment-closing";
 import { Pagination } from "@/components/pagination";
-import { CATEGORY_LABEL, PRIORITY_LABEL, STATUS_LABEL, reportCode } from "@/domain/labels";
+import { PlazoTag } from "@/components/plazo-tag";
+import { TypeTag } from "@/components/type-tag";
+import { PRIORITY_LABEL, STATUS_LABEL, orderSummary, reportCode } from "@/domain/labels";
 import { googleMapsUrl, telHref } from "@/domain/text";
-import type { ActionResult, DamageCategory, Priority, ReportStatus } from "@/domain/types";
+import type { ActionResult, DamageCategory, OrderType, Priority, ReportStatus, WithdrawalReason } from "@/domain/types";
 import { newId, withRetry } from "@/lib/client-utils";
 import { TIME_ZONE, formatClock, formatShortDateTime } from "@/lib/dates";
+import { plazoDeOrden } from "@/lib/plazo";
+import { useNow } from "@/lib/use-now";
 import { iniciarReporte, marcarRealizado, tomarReporte } from "../actions";
 import { jakarta, jetbrainsMono } from "../fonts";
 import { PhotoPicker } from "../photo-picker";
@@ -30,15 +42,24 @@ export type HomeTab = "a-mi-cargo" | "disponibles";
 export type HomeReport = {
   id: string;
   code: number;
+  type: OrderType;
   street: string;
   neighborhood: string;
   city: string;
-  category: DamageCategory;
+  category: DamageCategory | null;
+  plan: string | null;
+  withdrawalReason: WithdrawalReason | null;
+  withdrawalReasonOther: string | null;
   priority: Priority;
   status: ReportStatus;
   createdAt: Date;
-  /** Solo viene en "A mi cargo". */
+  /** Plazo. */
+  dueAt: Date;
+  warnFromHours: number;
+  completedAt: Date | null;
+  /** Solo vienen en "A mi cargo" ("Llamar" y el cierre de equipos). */
   clientPhone?: string;
+  equipment?: ClosingEquipment[];
 };
 
 type Lists = { mine: HomeReport[]; available: HomeReport[]; availableTotal: number; doneToday: number };
@@ -68,13 +89,13 @@ const ACTIONS: Record<OpKind, { busy: string; ok: (code: string) => string }> = 
   complete: { busy: "Guardando…", ok: (c) => `${c} realizado. Pasó a Mi historial.` },
 };
 
-/** Mismo orden que el servidor: En proceso primero, luego prioridad y antigüedad. */
+/** Mismo orden que el servidor: lo que vence primero arriba, luego prioridad y código. */
 function sortMine(list: HomeReport[]): HomeReport[] {
   return [...list].sort(
     (a, b) =>
-      Number(b.status === "EN_PROCESO") - Number(a.status === "EN_PROCESO") ||
+      new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime() ||
       PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
-      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      a.code - b.code,
   );
 }
 
@@ -117,6 +138,7 @@ export function TechnicianHomeView({
   initialTab,
   initialToast,
   flash,
+  now: serverNow,
 }: {
   firstName: string;
   mine: HomeReport[];
@@ -128,6 +150,8 @@ export function TechnicianHomeView({
   initialTab: HomeTab;
   initialToast: string | null;
   flash: ReactNode;
+  /** Hora del servidor al pintar (el plazo se recalcula solo cada minuto). */
+  now: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -148,6 +172,13 @@ export function TechnicianHomeView({
   const [header, setHeader] = useState<{ greeting: string; loadedAt: string } | null>(null);
 
   const busy = acting || pending !== null;
+  const now = useNow(serverNow);
+  // Aviso fijo: órdenes a su cargo Por vencer o Vencidas.
+  const urgent = lists.mine.filter((r) => {
+    const n = plazoDeOrden(r, new Date(now)).nivel;
+    return n === "por-vencer" || n === "vencido";
+  });
+  const overdue = urgent.filter((r) => plazoDeOrden(r, new Date(now)).nivel === "vencido").length;
 
   // Cada vez que llegan datos del servidor: hora de la última carga y saludo actualizado.
   useEffect(() => {
@@ -214,7 +245,10 @@ export function TechnicianHomeView({
   }
 
   /** Ejecuta una acción con actualización optimista. Devuelve el resultado para el panel de cierre. */
-  function run(op: Op, extra: { requestId?: string; note?: string; attachmentIds?: string[] } = {}): Promise<ActionResult> {
+  function run(
+    op: Op,
+    extra: { requestId?: string; note?: string; attachmentIds?: string[]; equipment?: ReturnType<typeof closingPayload> } = {},
+  ): Promise<ActionResult> {
     const { kind, report } = op;
     const code = reportCode(report.code);
     if (!navigator.onLine) {
@@ -233,7 +267,13 @@ export function TechnicianHomeView({
         ? tomarReporte({ reportId: report.id, requestId })
         : kind === "start"
           ? iniciarReporte({ reportId: report.id, requestId })
-          : marcarRealizado({ reportId: report.id, requestId, note: extra.note, attachmentIds: extra.attachmentIds });
+          : marcarRealizado({
+              reportId: report.id,
+              requestId,
+              note: extra.note,
+              attachmentIds: extra.attachmentIds,
+              equipment: extra.equipment,
+            });
 
     return new Promise((resolve) => {
       startAction(async () => {
@@ -264,7 +304,12 @@ export function TechnicianHomeView({
     });
   }
 
-  async function confirmComplete(input: { requestId: string; note: string; attachmentIds: string[] }) {
+  async function confirmComplete(input: {
+    requestId: string;
+    note: string;
+    attachmentIds: string[];
+    equipment: ReturnType<typeof closingPayload>;
+  }) {
     if (!completing) return;
     setSheetError(null);
     const res = await run({ kind: "complete", report: completing }, input);
@@ -309,6 +354,29 @@ export function TechnicianHomeView({
 
         {flash}
 
+        {/* Aviso fijo: órdenes por vencer o vencidas, con acceso directo a ellas. */}
+        {urgent.length ? (
+          <button
+            type="button"
+            onClick={() => {
+              setTab("a-mi-cargo");
+              setOpenId(urgent[0]!.id);
+              requestAnimationFrame(() =>
+                document.getElementById(`card-a-mi-cargo-${urgent[0]!.id}`)?.closest("article")?.scrollIntoView({ behavior: "smooth", block: "center" }),
+              );
+            }}
+            className={`sticky top-2 z-30 flex min-h-12 w-full items-center gap-2.5 rounded-2xl px-4 py-3 text-left text-[15px] font-bold shadow-[0_8px_20px_rgba(15,23,42,.12)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] md:top-[108px] ${
+              overdue ? "bg-[#991B1B] text-white" : "bg-[#FFF7ED] text-[#9A3412] ring-1 ring-[#EA580C]"
+            }`}
+          >
+            <Clock size={20} aria-hidden className="shrink-0" />
+            <span className="flex-1">
+              {urgentText(urgent.length, overdue)}
+            </span>
+            <span className="text-sm underline underline-offset-2">Ver</span>
+          </button>
+        ) : null}
+
         {/* 3. Pestañas */}
         <Tabs tab={tab} onSelect={setTab} mineCount={lists.mine.length} availableCount={lists.availableTotal} />
 
@@ -321,6 +389,7 @@ export function TechnicianHomeView({
               <ReportCard
                 key={`${tab}-${r.id}`}
                 report={r}
+                now={now}
                 index={i}
                 mode={tab}
                 open={openId === r.id}
@@ -453,8 +522,17 @@ function Tabs({
   );
 }
 
+/** "Tiene 2 órdenes por vencer" / "Tiene 1 orden vencida" / "Tiene 3 órdenes vencidas o por vencer". */
+function urgentText(total: number, overdue: number): string {
+  const plural = total === 1 ? "orden" : "órdenes";
+  if (overdue === total) return `Tiene ${total} ${plural} ${total === 1 ? "vencida" : "vencidas"}`;
+  if (overdue === 0) return `Tiene ${total} ${plural} por vencer`;
+  return `Tiene ${total} ${plural} vencidas o por vencer`;
+}
+
 function ReportCard({
   report,
+  now,
   index,
   mode,
   open,
@@ -466,6 +544,7 @@ function ReportCard({
   onComplete,
 }: {
   report: HomeReport;
+  now: number;
   index: number;
   mode: HomeTab;
   open: boolean;
@@ -493,6 +572,7 @@ function ReportCard({
         className="block w-full py-3.5 pr-4 pl-5 text-left focus-visible:outline-3 focus-visible:-outline-offset-3 focus-visible:outline-[#2563EB]"
       >
         <span className="flex flex-wrap items-center gap-1.5">
+          <TypeTag type={report.type} />
           <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${STATUS_PILL[report.status] ?? "bg-[#F1F5F9] text-[#334155]"}`}>
             {STATUS_LABEL[report.status]}
           </span>
@@ -509,8 +589,9 @@ function ReportCard({
         <span className="mt-2 block text-lg leading-tight font-extrabold text-[#0F172A]">{report.street}</span>
         <span className="mt-0.5 block text-sm text-[#475569]">{report.neighborhood}</span>
         <span className="mt-1 block text-[13px] text-[#64748B]">
-          {CATEGORY_LABEL[report.category]} · {formatShortDateTime(report.createdAt)}
+          {orderSummary(report)} · {formatShortDateTime(report.createdAt)}
         </span>
+        <PlazoTag order={report} now={now} className="mt-2" />
       </button>
 
       {/* Animación de apertura: la fila del grid pasa de 0fr a 1fr. Cerrada queda inerte (sin foco ni lector). */}
@@ -638,9 +719,11 @@ function CompleteSheet({
   saving: boolean;
   error: string | null;
   onCancel: () => void;
-  onConfirm: (input: { requestId: string; note: string; attachmentIds: string[] }) => void;
+  onConfirm: (input: { requestId: string; note: string; attachmentIds: string[]; equipment: ReturnType<typeof closingPayload> }) => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const equipment = report.equipment ?? [];
+  const [closing, setClosing] = useState<ClosingValue[]>(() => initialClosing(equipment));
   const opener = useRef<Element | null>(null);
   // Mismo id mientras el panel esté abierto: si un envío se repite, el servidor no lo duplica.
   const [requestId] = useState(newId);
@@ -666,7 +749,8 @@ function CompleteSheet({
   }, []);
 
   const missingPhoto = photos.ids.length === 0;
-  const disabled = saving || photos.busy || missingPhoto;
+  const equipmentProblem = closingProblem(report.type, closing);
+  const disabled = saving || photos.busy || missingPhoto || equipmentProblem !== null;
 
   return (
     <div className="fixed inset-0 z-50">
@@ -685,13 +769,16 @@ function CompleteSheet({
           noValidate
           onSubmit={(e) => {
             e.preventDefault();
-            if (!disabled) onConfirm({ requestId, note, attachmentIds: photos.ids });
+            if (!disabled) onConfirm({ requestId, note, attachmentIds: photos.ids, equipment: closingPayload(report.type, closing) });
           }}
         >
           <h2 id="complete-title" className="text-lg font-extrabold text-[#0F172A]">
             ¿Marcar {code} como realizado?
           </h2>
           <p className="-mt-2 text-sm text-[#475569]">{report.street}</p>
+          {report.type !== "DANO" && equipment.length ? (
+            <EquipmentClosing type={report.type} equipment={equipment} values={closing} onChange={setClosing} disabled={saving} />
+          ) : null}
           <PhotoPicker reportId={report.id} kind="EVIDENCIA" max={10} label="Fotos de evidencia * (mínimo 1)" onChange={onPhotos} />
           <div>
             <label htmlFor="complete-note" className="label">

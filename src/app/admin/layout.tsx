@@ -1,4 +1,6 @@
 import { AppHeader } from "@/components/app-header";
+import { maybeRunDeadlineCheck } from "@/server/deadlines";
+import { getNotificationSummary } from "@/server/notifications";
 import { requireRole } from "@/server/session";
 import { AdminMain } from "./admin-main";
 
@@ -8,10 +10,14 @@ import { AdminMain } from "./admin-main";
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await requireRole("ADMIN");
+  // Revisión "perezosa" de plazos (máx. cada 10 min) antes de contar los avisos de la campanita.
+  await maybeRunDeadlineCheck();
+  const notifications = await getNotificationSummary(user);
   return (
     <>
       <AppHeader
         userName={user.name}
+        notifications={notifications}
         home="/admin"
         newReportHref="/admin/reportes/nuevo"
         links={[

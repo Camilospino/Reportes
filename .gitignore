@@ -17,3 +17,4 @@ storage-test/
 .env.qa
 storage-qa/
 tests/e2e/fixtures/
+.env.r2

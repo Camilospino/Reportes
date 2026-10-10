@@ -24,6 +24,24 @@ export type DamageCategory = (typeof CATEGORIES)[number];
 export const PRIORITIES = ["ALTA", "MEDIA", "BAJA"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
+export const ORDER_TYPES = ["DANO", "INSTALACION", "RETIRO"] as const;
+export type OrderType = (typeof ORDER_TYPES)[number];
+
+export const EQUIPMENT_ACTIONS = ["INSTALAR", "RETIRAR"] as const;
+export type EquipmentAction = (typeof EQUIPMENT_ACTIONS)[number];
+
+export const EQUIPMENT_CONDITIONS = ["BUENO", "DANADO", "INCOMPLETO"] as const;
+export type EquipmentCondition = (typeof EQUIPMENT_CONDITIONS)[number];
+
+export const WITHDRAWAL_REASONS = ["CANCELACION", "CAMBIO_EQUIPO", "MORA", "OTRO"] as const;
+export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
+
+export const DEADLINE_THRESHOLDS = ["H24", "H48", "VENCIDO"] as const;
+export type DeadlineThreshold = (typeof DEADLINE_THRESHOLDS)[number];
+
+/** Sugerencias para el tipo de equipo (es texto libre). */
+export const EQUIPMENT_KIND_SUGGESTIONS = ["Router", "ONU", "Decodificador", "Antena", "Otro"] as const;
+
 export const ATTACHMENT_KINDS = ["EVIDENCIA", "FACHADA"] as const;
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 

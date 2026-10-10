@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { StatusBadge } from "@/components/badges";
 import { Pagination } from "@/components/pagination";
+import { TypeTag } from "@/components/type-tag";
 import { AUDIT_ACTION_LABEL, reportCode } from "@/domain/labels";
 import { formatDateTime } from "@/lib/dates";
 import { technicianHistory } from "@/server/reports";
@@ -25,6 +26,7 @@ export default async function TechnicianHistoryPage({ searchParams }: { searchPa
             <li key={e.id.toString()}>
               <Link href={`/tecnico/reportes/${e.report.id}`} className="card block hover:border-brand-600">
                 <div className="flex flex-wrap items-center gap-2">
+                  <TypeTag type={e.report.type} />
                   <span className="font-semibold">{AUDIT_ACTION_LABEL[e.action]}</span>
                   <span className="ml-auto font-mono text-xs text-slate-500">{reportCode(e.report.code)}</span>
                 </div>

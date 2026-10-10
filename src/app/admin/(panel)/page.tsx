@@ -1,67 +1,64 @@
 import type { Metadata } from "next";
-import { AUDIT_ACTION_LABEL, CATEGORY_LABEL, STATUS_LABEL } from "@/domain/labels";
-import type { ReportStatus } from "@/domain/types";
-import { TIME_ZONE } from "@/lib/dates";
-import { countByStatus, listReviewInbox, listReviewInboxHistory } from "@/server/reports";
+import { orderTypeFromSlug } from "@/domain/labels";
+import { hasPendingPickup } from "@/components/equipment-table";
+import { listDeadlineConfig } from "@/server/deadline-config";
+import { countByStatusAndType, deadlineCompliance, listPanelOrders } from "@/server/reports";
 import { requireRole } from "@/server/session";
-import { BandejaPanel, type InboxEvent, type InboxFilter, type InboxItem } from "./bandeja-panel";
+import { listActiveTechniciansForSelect } from "@/server/users";
+import { PrioridadesPanel, type PanelOrder } from "./prioridades-panel";
 
 export const metadata: Metadata = { title: "Panel" };
 
-// "9/10, 12:00 p. m." en hora de Colombia.
-const fmt = new Intl.DateTimeFormat("es-CO", { timeZone: TIME_ZONE, day: "numeric", month: "numeric", hour: "numeric", minute: "2-digit" });
-
-const FILTERS: InboxFilter[] = ["todos", "realizado", "aplazado", "ausente"];
-
-/** Nota visible del evento: comentario del admin, o la nota/motivo que dejó el técnico. */
-function eventNote(comment: string | null, data: unknown): string | null {
-  if (comment) return comment;
-  if (data && typeof data === "object") {
-    const d = data as Record<string, unknown>;
-    for (const k of ["nota", "motivo"]) if (typeof d[k] === "string" && d[k]) return d[k] as string;
-  }
-  return null;
-}
-
-export default async function AdminDashboard({ searchParams }: { searchParams: Promise<{ f?: string; id?: string }> }) {
+/**
+ * Panel de prioridades. Carga todo en paralelo (sin N+1): conteos por estado y tipo, órdenes de los
+ * carriles, configuración de plazos, cumplimiento de 30 días y técnicos activos para reasignar.
+ */
+export default async function AdminDashboard({ searchParams }: { searchParams: Promise<{ tipo?: string }> }) {
   await requireRole("ADMIN");
-  const [counts, reports, history, sp] = await Promise.all([countByStatus(), listReviewInbox(), listReviewInboxHistory(), searchParams]);
+  const now = new Date();
+  const [counts, orders, config, compliance, technicians, sp] = await Promise.all([
+    countByStatusAndType(),
+    listPanelOrders(),
+    listDeadlineConfig(),
+    deadlineCompliance(now),
+    listActiveTechniciansForSelect(),
+    searchParams,
+  ]);
 
-  const byReport = new Map<string, InboxEvent[]>();
-  for (const h of history) {
-    if (!h.reportId) continue;
-    const list = byReport.get(h.reportId) ?? [];
-    list.push({
-      id: String(h.id),
-      label: AUDIT_ACTION_LABEL[h.action] ?? h.action,
-      actor: h.actor?.name ?? null,
-      at: fmt.format(h.createdAt),
-      note: eventNote(h.comment, h.data),
-      status: h.toStatus,
-    });
-    byReport.set(h.reportId, list);
-  }
+  // "plazo de 72 h por orden" si los tres tipos tienen el mismo; si no, "plazo según el tipo".
+  const hours = [...new Set(config.map((c) => c.deadlineHours))];
+  const warn = [...new Set(config.map((c) => c.warnFromHours))];
+  const plazoLabel = hours.length === 1 ? `plazo de ${hours[0]} h por orden` : "plazo según el tipo";
+  const warnLabel = warn.length === 1 ? `Llevan más de ${warn[0]} h abiertas.` : "Ya pasaron su hora de aviso.";
 
-  const items: InboxItem[] = reports.map((r) => ({
-    id: r.id,
-    code: r.code,
-    street: r.street,
-    neighborhood: r.neighborhood,
-    city: r.city,
-    category: CATEGORY_LABEL[r.category],
-    priority: r.priority,
-    status: r.status as InboxItem["status"],
-    technician: r.assignedTo?.name ?? null,
-    client: r.clientName ? `${r.clientName} · ${r.clientPhone}` : null,
-    updatedLabel: fmt.format(r.updatedAt),
-    // Reportes viejos sin bitácora: solo lo que se sabe (creación y estado actual), sin inventar pasos.
-    history: byReport.get(r.id) ?? [
-      { id: `${r.id}-crear`, label: "Reporte creado", actor: null, at: fmt.format(r.createdAt), note: null, status: "PENDIENTE" as ReportStatus },
-      { id: `${r.id}-actual`, label: STATUS_LABEL[r.status], actor: null, at: fmt.format(r.updatedAt), note: null, status: r.status },
-    ],
+  const items: PanelOrder[] = orders.map((o) => ({
+    id: o.id,
+    code: o.code,
+    type: o.type,
+    street: o.street,
+    neighborhood: o.neighborhood,
+    city: o.city,
+    status: o.status,
+    version: o.version,
+    assignedToId: o.assignedToId,
+    technician: o.assignedTo?.name ?? null,
+    createdAt: o.createdAt,
+    dueAt: o.dueAt,
+    warnFromHours: o.warnFromHours,
+    completedAt: o.completedAt,
+    pendingPickup: hasPendingPickup(o.type, o.equipment),
   }));
 
-  const filter = FILTERS.find((f) => f === sp.f) ?? "todos";
-  const code = Number(/^R-(\d{1,9})$/i.exec(sp.id ?? "")?.[1]);
-  return <BandejaPanel items={items} counts={counts} initialFilter={filter} initialCode={Number.isInteger(code) && code > 0 ? code : null} />;
+  return (
+    <PrioridadesPanel
+      orders={items}
+      counts={counts}
+      compliance={compliance}
+      technicians={technicians}
+      plazoLabel={plazoLabel}
+      warnLabel={warnLabel}
+      now={now.getTime()}
+      initialType={orderTypeFromSlug(sp.tipo) ?? null}
+    />
+  );
 }

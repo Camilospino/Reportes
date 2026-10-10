@@ -3,7 +3,8 @@
  * El servidor SIEMPRE vuelve a validar: lo del navegador es solo para dar respuesta rápida.
  */
 import { z } from "zod";
-import { CATEGORIES, PRIORITIES } from "./types";
+import { CATEGORIES, EQUIPMENT_CONDITIONS, ORDER_TYPES, PRIORITIES, WITHDRAWAL_REASONS } from "./types";
+import { NIVELES_PLAZO } from "@/lib/plazo";
 import { SERVICE_CITY } from "./location";
 import {
   DATE_RE,
@@ -48,14 +49,13 @@ const uuid = z.string().uuid("Identificador no válido.");
 
 // ─── Reportes ──────────────────────────────────────────────────────────
 
-export const reportInputSchema = z.object({
+/** Campos comunes a los tres tipos de orden: dirección, cliente, prioridad y técnico. */
+const commonReportFields = {
   street: requiredText(200, "Ingrese la calle o dirección."),
   neighborhood: requiredText(120, "Ingrese el barrio."),
   /** Solo se opera en Cartagena: se ignora lo que envíe el navegador. */
   city: z.literal(SERVICE_CITY).catch(SERVICE_CITY),
   referencePoint: optionalText(200),
-  category: z.enum(CATEGORIES, { errorMap: () => ({ message: "Seleccione la categoría." }) }),
-  description: requiredText(2000, "Describa el posible daño."),
   priority: z.enum(PRIORITIES, { errorMap: () => ({ message: "Seleccione la prioridad." }) }),
   clientName: requiredText(120, "Ingrese el nombre del cliente."),
   clientPhone: phoneSchema,
@@ -64,16 +64,118 @@ export const reportInputSchema = z.object({
     .union([uuid, z.literal("")])
     .optional()
     .transform((v) => (v ? v : null)),
+};
+
+/** Un equipo de una instalación o un retiro, al crear la orden: tipo y, si se conoce, serial. */
+export const equipmentInputSchema = z.object({
+  /** Solo al editar: equipo que ya existe (conserva sus datos de cierre). */
+  id: uuid.optional(),
+  kind: requiredText(40, "Indique el tipo de cada equipo."),
+  serial: optionalText(80),
 });
+export type EquipmentInput = z.infer<typeof equipmentInputSchema>;
+
+const equipmentListSchema = z
+  .array(equipmentInputSchema, { required_error: "Agregue al menos un equipo.", invalid_type_error: "Agregue al menos un equipo." })
+  .min(1, "Agregue al menos un equipo.")
+  .max(10, "Máximo 10 equipos.");
+
+/**
+ * Datos de una orden según su tipo (Daño, Instalación o Retiro). Sin `type` se asume Daño,
+ * como antes de existir los tipos. `futureDates`: al crear, la fecha sugerida no puede ser pasada.
+ */
+function makeReportInputSchema({ futureDates }: { futureDates: boolean }) {
+  const suggestedDate = z
+    .string()
+    .optional()
+    .transform((v) => (v ? v : undefined))
+    .refine((v) => v === undefined || DATE_RE.test(v), "Fecha no válida.")
+    .refine((v) => !futureDates || v === undefined || v >= bogotaDateString(), "La fecha sugerida no puede ser anterior a hoy.");
+  const union = z.discriminatedUnion("type", [
+    z.object({
+      ...commonReportFields,
+      type: z.literal("DANO"),
+      category: z.enum(CATEGORIES, { errorMap: () => ({ message: "Seleccione la categoría." }) }),
+      description: requiredText(2000, "Describa el posible daño."),
+    }),
+    z.object({
+      ...commonReportFields,
+      type: z.literal("INSTALACION"),
+      plan: requiredText(60, "Indique el plan o la velocidad."),
+      suggestedDate,
+      description: optionalText(2000),
+      equipment: equipmentListSchema,
+    }),
+    z.object({
+      ...commonReportFields,
+      type: z.literal("RETIRO"),
+      withdrawalReason: z.enum(WITHDRAWAL_REASONS, { errorMap: () => ({ message: "Seleccione el motivo del retiro." }) }),
+      withdrawalReasonOther: optionalText(200),
+      description: optionalText(2000),
+      equipment: equipmentListSchema,
+    }),
+  ]);
+  return z
+    .preprocess((v) => (v && typeof v === "object" && !(v as { type?: unknown }).type ? { ...v, type: "DANO" } : v), union)
+    .superRefine((v, ctx) => {
+      if (v.type === "RETIRO" && v.withdrawalReason === "OTRO" && !v.withdrawalReasonOther) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["withdrawalReasonOther"], message: "Escriba el motivo del retiro." });
+      }
+    });
+}
+
+export const reportInputSchema = makeReportInputSchema({ futureDates: true });
+/** Al editar no se exige fecha futura: la sugerida pudo quedar en el pasado. */
+export const reportEditSchema = makeReportInputSchema({ futureDates: false });
 export type ReportInput = z.infer<typeof reportInputSchema>;
 
-export const reportUpdateSchema = reportInputSchema.extend({
-  version: z.coerce.number().int().min(0),
-});
+export const versionSchema = z.coerce.number().int().min(0);
+
+/** Ajustes → Plazos: horas del plazo y desde cuándo avisar, por tipo de orden. */
+export const deadlineConfigSchema = z
+  .array(
+    z.object({
+      type: z.enum(ORDER_TYPES),
+      deadlineHours: z.coerce
+        .number({ invalid_type_error: "Ingrese un número de horas." })
+        .int("Use horas enteras.")
+        .min(1, "Mínimo 1 hora.")
+        .max(720, "Máximo 720 horas (30 días)."),
+      warnFromHours: z.coerce
+        .number({ invalid_type_error: "Ingrese un número de horas." })
+        .int("Use horas enteras.")
+        .min(1, "Mínimo 1 hora."),
+    }),
+  )
+  .length(ORDER_TYPES.length)
+  .superRefine((rows, ctx) => {
+    rows.forEach((r, i) => {
+      if (r.warnFromHours >= r.deadlineHours) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [i, "warnFromHours"], message: "El aviso debe empezar antes de que venza el plazo." });
+      }
+    });
+    if (new Set(rows.map((r) => r.type)).size !== rows.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Tipos repetidos." });
+    }
+  });
 
 // ─── Cambios de estado ─────────────────────────────────────────────────
 
 const requestId = uuid;
+
+/**
+ * Cierre de un equipo al marcar Realizado. Instalación: serial (obligatorio si el equipo aún no lo
+ * tiene). Retiro: recibido sí/no y, si se recibió, su estado. Las reglas por tipo se validan en el
+ * servidor contra los equipos de la orden (applyTransition), no solo aquí.
+ */
+export const equipmentClosingSchema = z.object({
+  id: uuid,
+  serial: optionalText(80),
+  received: z.boolean().optional(),
+  condition: z.enum(EQUIPMENT_CONDITIONS).optional(),
+  observation: optionalText(300),
+});
+export type EquipmentClosingInput = z.infer<typeof equipmentClosingSchema>;
 
 /** Resultado de la visita del técnico. */
 export const outcomeSchema = z.discriminatedUnion("transition", [
@@ -86,6 +188,8 @@ export const outcomeSchema = z.discriminatedUnion("transition", [
       .array(uuid)
       .min(1, "Debe subir al menos una foto como evidencia.")
       .max(10, "Máximo 10 fotos."),
+    /** Instalaciones y retiros: datos de cierre de cada equipo (se validan contra la orden en el servidor). */
+    equipment: z.array(equipmentClosingSchema).max(10).default([]),
   }),
   z.object({
     transition: z.literal("APLAZADO"),
@@ -157,6 +261,8 @@ export const panelDecisionSchema = z.object({
 // ─── Listado / filtros ─────────────────────────────────────────────────
 
 export const REPORT_SORTS = [
+  "vence-asc",
+  "vence-desc",
   "creado-desc",
   "creado-asc",
   "codigo-desc",
@@ -174,8 +280,12 @@ export const reportFiltersSchema = z.object({
   desde: z.string().regex(DATE_RE).optional().catch(undefined),
   hasta: z.string().regex(DATE_RE).optional().catch(undefined),
   q: z.string().trim().max(100).optional().catch(undefined),
-  /** Orden de la tabla: campo y sentido. Por defecto, los más recientes primero. */
-  orden: z.enum(REPORT_SORTS).catch("creado-desc").default("creado-desc"),
+  /** Tipo de orden (pestañas): dano, instalacion o retiro. */
+  tipo: z.enum(["dano", "instalacion", "retiro"]).optional().catch(undefined),
+  /** Nivel del plazo: a-tiempo, atencion, por-vencer o vencido. */
+  plazo: z.enum(NIVELES_PLAZO).optional().catch(undefined),
+  /** Orden de la tabla: campo y sentido. Por defecto, lo que vence primero. */
+  orden: z.enum(REPORT_SORTS).catch("vence-asc").default("vence-asc"),
   page: z.coerce.number().int().min(1).max(10_000).catch(1).default(1),
 });
 

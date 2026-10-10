@@ -40,7 +40,14 @@ export default async function TechnicianReportPage({ params }: { params: Promise
         </Alert>
       ) : null}
       <ReportInfo report={report} />
-      <TechActions reportId={report.id} reportCode={report.code} canTake={canTake} isWorking={isWorking} />
+      <TechActions
+        reportId={report.id}
+        reportCode={report.code}
+        type={report.type}
+        equipment={report.equipment}
+        canTake={canTake}
+        isWorking={isWorking}
+      />
       <ReportHistory entries={report.auditLog} />
     </>
   );

@@ -35,6 +35,7 @@ export default async function TechnicianHome({
       initialTab={tab}
       initialToast={initialToast}
       flash={<Flash msg={sp.msg} />}
+      now={Date.now()}
     />
   );
 }

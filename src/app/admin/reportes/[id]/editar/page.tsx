@@ -16,7 +16,13 @@ export default async function EditReportPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   if (!z.string().uuid().safeParse(id).success) notFound();
   const [report, technicians] = await Promise.all([
-    prisma.report.findUnique({ where: { id }, include: { assignedTo: { select: { id: true, name: true } } } }),
+    prisma.report.findUnique({
+      where: { id },
+      include: {
+        assignedTo: { select: { id: true, name: true } },
+        equipment: { select: { id: true, kind: true, serial: true }, orderBy: { createdAt: "asc" } },
+      },
+    }),
     listActiveTechniciansForSelect(),
   ]);
   if (!report) notFound();
@@ -37,11 +43,17 @@ export default async function EditReportPage({ params }: { params: Promise<{ id:
         submitLabel="Guardar cambios"
         cancelHref={`/admin/reportes/${report.id}`}
         initial={{
+          type: report.type,
           street: report.street,
           neighborhood: report.neighborhood,
           referencePoint: report.referencePoint ?? "",
-          category: report.category,
+          category: report.category ?? "",
           description: report.description,
+          plan: report.plan ?? "",
+          suggestedDate: report.suggestedDate ? report.suggestedDate.toISOString().slice(0, 10) : "",
+          withdrawalReason: report.withdrawalReason ?? "",
+          withdrawalReasonOther: report.withdrawalReasonOther ?? "",
+          equipment: report.equipment,
           priority: report.priority,
           clientName: report.clientName,
           clientPhone: report.clientPhone,

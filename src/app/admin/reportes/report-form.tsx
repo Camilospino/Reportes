@@ -3,17 +3,35 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/alert";
+import { EquipmentField } from "@/components/equipment-editor";
 import { SelectField, TextAreaField, TextField } from "@/components/fields";
 import { SubmitButton } from "@/components/submit-button";
-import { CATEGORY_LABEL, PRIORITY_LABEL } from "@/domain/labels";
-import { CATEGORIES, PRIORITIES, type ActionResult, type DamageCategory, type Priority } from "@/domain/types";
+import { CATEGORY_LABEL, ORDER_TYPE_LABEL, PRIORITY_LABEL, WITHDRAWAL_REASON_LABEL } from "@/domain/labels";
+import {
+  CATEGORIES,
+  PRIORITIES,
+  WITHDRAWAL_REASONS,
+  type ActionResult,
+  type DamageCategory,
+  type OrderType,
+  type Priority,
+  type WithdrawalReason,
+} from "@/domain/types";
 
 export type ReportFormValues = {
+  /** El tipo no se cambia al editar. */
+  type: OrderType;
   street: string;
   neighborhood: string;
   referencePoint: string;
   category: DamageCategory | "";
   description: string;
+  plan: string;
+  suggestedDate: string;
+  withdrawalReason: WithdrawalReason | "";
+  withdrawalReasonOther: string;
+  /** Instalaciones y retiros. */
+  equipment: { id?: string; kind: string; serial: string | null }[];
   priority: Priority | "";
   clientName: string;
   clientPhone: string;
@@ -41,7 +59,14 @@ export function ReportForm({ action, technicians, initial: initialValues, lockTe
   const [state, formAction] = useActionState(async (prev: FormState | null, fd: FormData): Promise<FormState> => {
     const result = await action(prev, fd);
     if (result.ok) return result;
-    const values = { ...initialValues, ...(Object.fromEntries(fd) as Partial<ReportFormValues>) };
+    const sent = Object.fromEntries(fd) as Record<string, string>;
+    let equipment = initialValues.equipment;
+    try {
+      if (sent.equipment) equipment = JSON.parse(sent.equipment);
+    } catch {
+      // Se conserva la lista inicial.
+    }
+    const values = { ...initialValues, ...(sent as Partial<ReportFormValues>), type: initialValues.type, equipment };
     return { ...result, values, attempt: (prev?.attempt ?? 0) + 1 };
   }, null);
   const e = state && !state.ok ? state.fieldErrors : undefined;
@@ -51,6 +76,7 @@ export function ReportForm({ action, technicians, initial: initialValues, lockTe
     <form key={state?.attempt ?? 0} action={formAction} className="space-y-4">
       {state && !state.ok ? <Alert kind="error">{state.error}</Alert> : null}
       {initial.version !== undefined ? <input type="hidden" name="version" value={initial.version} /> : null}
+      <input type="hidden" name="type" value={initial.type} />
 
       <fieldset className="card space-y-4">
         <legend className="px-1 text-lg font-bold">Dirección</legend>
@@ -60,17 +86,46 @@ export function ReportForm({ action, technicians, initial: initialValues, lockTe
       </fieldset>
 
       <fieldset className="card space-y-4">
-        <legend className="px-1 text-lg font-bold">Daño</legend>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <SelectField
-            label="Categoría *"
-            name="category"
-            defaultValue={initial.category}
-            required
-            placeholder="Seleccione…"
-            options={CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
-            errors={e?.category}
+        <legend className="px-1 text-lg font-bold">{ORDER_TYPE_LABEL[initial.type]}</legend>
+        {initial.type === "INSTALACION" ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <TextField label="Plan o velocidad *" name="plan" defaultValue={initial.plan} required maxLength={60} placeholder="Ej.: 300 Mbps" errors={e?.plan} />
+            <TextField label="Fecha sugerida para la visita" name="suggestedDate" type="date" defaultValue={initial.suggestedDate} errors={e?.suggestedDate} />
+          </div>
+        ) : null}
+        {initial.type === "RETIRO" ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <SelectField
+              label="Motivo del retiro *"
+              name="withdrawalReason"
+              defaultValue={initial.withdrawalReason}
+              required
+              placeholder="Seleccione…"
+              options={WITHDRAWAL_REASONS.map((r) => ({ value: r, label: WITHDRAWAL_REASON_LABEL[r] }))}
+              errors={e?.withdrawalReason}
+            />
+            <TextField label="Otro motivo (si eligió Otro)" name="withdrawalReasonOther" defaultValue={initial.withdrawalReasonOther} maxLength={200} errors={e?.withdrawalReasonOther} />
+          </div>
+        ) : null}
+        {initial.type !== "DANO" ? (
+          <EquipmentField
+            initial={initial.equipment}
+            label={initial.type === "INSTALACION" ? "Equipos a instalar *" : "Equipos a retirar *"}
+            error={e?.equipment?.[0]}
           />
+        ) : null}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {initial.type === "DANO" ? (
+            <SelectField
+              label="Categoría *"
+              name="category"
+              defaultValue={initial.category}
+              required
+              placeholder="Seleccione…"
+              options={CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+              errors={e?.category}
+            />
+          ) : null}
           <SelectField
             label="Prioridad *"
             name="priority"
@@ -81,7 +136,11 @@ export function ReportForm({ action, technicians, initial: initialValues, lockTe
             errors={e?.priority}
           />
         </div>
-        <TextAreaField label="Descripción del posible daño *" name="description" defaultValue={initial.description} required maxLength={2000} placeholder="Ej.: Sin internet desde ayer, la luz LOS del router está en rojo." errors={e?.description} />
+        {initial.type === "DANO" ? (
+          <TextAreaField label="Descripción del posible daño *" name="description" defaultValue={initial.description} required maxLength={2000} placeholder="Ej.: Sin internet desde ayer, la luz LOS del router está en rojo." errors={e?.description} />
+        ) : (
+          <TextAreaField label="Observaciones (opcional)" name="description" defaultValue={initial.description} maxLength={2000} errors={e?.description} />
+        )}
       </fieldset>
 
       <fieldset className="card space-y-4">

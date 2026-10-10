@@ -44,6 +44,39 @@ enum Priority {
   BAJA
 }
 
+/// Tipo de orden. Los tres comparten estados, flujo y consecutivo (R-000001).
+enum OrderType {
+  DANO
+  INSTALACION
+  RETIRO
+}
+
+enum EquipmentAction {
+  INSTALAR
+  RETIRAR
+}
+
+/// Estado del equipo recogido en un retiro.
+enum EquipmentCondition {
+  BUENO
+  DANADO
+  INCOMPLETO
+}
+
+enum WithdrawalReason {
+  CANCELACION
+  CAMBIO_EQUIPO
+  MORA
+  OTRO
+}
+
+/// Umbrales del plazo que generan aviso (los nombres son los de la configuración por defecto: 24 h, 48 h, 72 h).
+enum DeadlineThreshold {
+  H24
+  H48
+  VENCIDO
+}
+
 enum AttachmentKind {
   EVIDENCIA
   FACHADA
@@ -69,11 +102,12 @@ model User {
   updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   sessions        Session[]
-  assignedReports Report[]     @relation("AssignedReports")
-  createdReports  Report[]     @relation("CreatedReports")
+  assignedReports Report[]       @relation("AssignedReports")
+  createdReports  Report[]       @relation("CreatedReports")
   attachments     Attachment[]
-  auditEntries    AuditLog[]   @relation("AuditActor")
-  auditAsTarget   AuditLog[]   @relation("AuditTargetUser")
+  auditEntries    AuditLog[]     @relation("AuditActor")
+  auditAsTarget   AuditLog[]     @relation("AuditTargetUser")
+  notifications   Notification[]
 
   @@map("users")
 }
@@ -95,48 +129,68 @@ model Session {
 }
 
 model Report {
-  id             String         @id @default(uuid()) @db.Uuid
+  id                    String            @id @default(uuid()) @db.Uuid
   /// Consecutivo legible, se muestra como R-000123.
-  code           Int            @unique @default(autoincrement())
-  street         String         @db.VarChar(200)
-  neighborhood   String         @db.VarChar(120)
-  city           String         @db.VarChar(120)
-  referencePoint String?        @map("reference_point") @db.VarChar(200)
-  category       DamageCategory
-  description    String         @db.VarChar(2000)
-  priority       Priority
-  clientName     String         @map("client_name") @db.VarChar(120)
-  clientPhone    String         @map("client_phone") @db.VarChar(20)
+  code                  Int               @unique @default(autoincrement())
+  type                  OrderType         @default(DANO)
+  street                String            @db.VarChar(200)
+  neighborhood          String            @db.VarChar(120)
+  city                  String            @db.VarChar(120)
+  referencePoint        String?           @map("reference_point") @db.VarChar(200)
+  /// Solo en daños (NULL en instalaciones y retiros).
+  category              DamageCategory?
+  /// Daño: descripción (obligatoria). Instalación y retiro: observaciones (puede quedar vacía).
+  description           String            @db.VarChar(2000)
+  /// Instalación: plan o velocidad contratada ("300 Mbps").
+  plan                  String?           @db.VarChar(60)
+  /// Instalación: fecha sugerida para la visita.
+  suggestedDate         DateTime?         @map("suggested_date") @db.Date
+  /// Retiro: motivo, y el texto libre cuando es OTRO.
+  withdrawalReason      WithdrawalReason? @map("withdrawal_reason")
+  withdrawalReasonOther String?           @map("withdrawal_reason_other") @db.VarChar(200)
+  priority              Priority
+  clientName            String            @map("client_name") @db.VarChar(120)
+  clientPhone           String            @map("client_phone") @db.VarChar(20)
   /// Número de contrato del cliente con la empresa de internet (en mayúsculas).
   /// NULL solo en reportes creados antes de existir el campo.
-  contractNumber String?        @map("contract_number") @db.VarChar(30)
-  status         ReportStatus   @default(PENDIENTE)
-  assignedToId   String?        @map("assigned_to_id") @db.Uuid
-  createdById    String         @map("created_by_id") @db.Uuid
+  contractNumber        String?           @map("contract_number") @db.VarChar(30)
+  status                ReportStatus      @default(PENDIENTE)
+  assignedToId          String?           @map("assigned_to_id") @db.Uuid
+  createdById           String            @map("created_by_id") @db.Uuid
   /// Nueva fecha estimada indicada por el técnico al aplazar.
-  rescheduledFor DateTime?      @map("rescheduled_for") @db.Date
+  rescheduledFor        DateTime?         @map("rescheduled_for") @db.Date
   /// Dirección normalizada (minúsculas, sin tildes) para la búsqueda.
-  searchText     String         @map("search_text") @db.VarChar(700)
+  searchText            String            @map("search_text") @db.VarChar(700)
   /// Control de concurrencia optimista: se incrementa en cada cambio.
-  version        Int            @default(0)
-  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
-  closedAt       DateTime?      @map("closed_at") @db.Timestamptz(3)
+  version               Int               @default(0)
+  createdAt             DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  closedAt              DateTime?         @map("closed_at") @db.Timestamptz(3)
   /// Cuándo pasó a En proceso. Se borra si vuelve a Pendiente.
-  startedAt      DateTime?      @map("started_at") @db.Timestamptz(3)
+  startedAt             DateTime?         @map("started_at") @db.Timestamptz(3)
   /// Cuándo el técnico lo marcó Realizado ("Hechos hoy"). Se conserva al verificar y se borra si se reabre.
-  completedAt    DateTime?      @map("completed_at") @db.Timestamptz(3)
+  completedAt           DateTime?         @map("completed_at") @db.Timestamptz(3)
+  /// Plazo: creadoEn + horas del plazo de su tipo al crearla. No cambia si el admin la devuelve.
+  dueAt                 DateTime          @map("due_at") @db.Timestamptz(3)
+  /// Desde cuántas horas se avisa ("Atención"), copiado de la configuración al crear.
+  warnFromHours         Int               @default(24) @map("warn_from_hours")
+  /// completedAt <= dueAt. Se calcula al marcar Realizado y se borra si se reabre.
+  metDeadline           Boolean?          @map("met_deadline")
 
-  assignedTo  User?        @relation("AssignedReports", fields: [assignedToId], references: [id])
-  createdBy   User         @relation("CreatedReports", fields: [createdById], references: [id])
-  attachments Attachment[]
-  auditLog    AuditLog[]
+  assignedTo    User?             @relation("AssignedReports", fields: [assignedToId], references: [id])
+  createdBy     User              @relation("CreatedReports", fields: [createdById], references: [id])
+  attachments   Attachment[]
+  auditLog      AuditLog[]
+  equipment     ReportEquipment[]
+  notifications Notification[]
 
   @@index([status, createdAt])
   @@index([assignedToId, status])
   @@index([assignedToId, completedAt])
   @@index([priority])
   @@index([createdAt])
+  @@index([type])
+  @@index([status, dueAt])
   @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin, map: "reports_search_text_trgm_idx")
   @@map("reports")
 }
@@ -192,4 +246,63 @@ model AuditLog {
   @@index([actorId, createdAt])
   @@index([createdAt])
   @@map("audit_log")
+}
+
+/// Equipos de una instalación (a instalar) o de un retiro (a recoger).
+model ReportEquipment {
+  id          String              @id @default(uuid()) @db.Uuid
+  reportId    String              @map("report_id") @db.Uuid
+  /// Texto libre con sugerencias: Router, ONU, Decodificador, Antena, Otro.
+  kind        String              @db.VarChar(40)
+  /// Puede faltar al crear; en instalaciones es obligatorio al cerrar.
+  serial      String?             @db.VarChar(80)
+  action      EquipmentAction
+  /// Solo retiros: si el técnico lo recibió.
+  received    Boolean?
+  /// Solo retiros: estado en que se recibió.
+  condition   EquipmentCondition?
+  observation String?             @db.VarChar(300)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@map("report_equipment")
+}
+
+/// Plazo por tipo de orden (editable en Ajustes → Plazos). Solo afecta a las órdenes nuevas.
+model DeadlineConfig {
+  type          OrderType @id
+  deadlineHours Int       @default(72) @map("deadline_hours")
+  warnFromHours Int       @default(24) @map("warn_from_hours")
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("deadline_config")
+}
+
+/// Aviso dentro de la app. Nunca se repite el mismo umbral de la misma orden para el mismo usuario.
+model Notification {
+  id        String            @id @default(uuid()) @db.Uuid
+  userId    String            @map("user_id") @db.Uuid
+  reportId  String            @map("report_id") @db.Uuid
+  threshold DeadlineThreshold
+  message   String            @db.VarChar(300)
+  read      Boolean           @default(false)
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, reportId, threshold])
+  @@index([userId, read, createdAt])
+  @@index([reportId])
+  @@map("notifications")
+}
+
+/// Última ejecución de tareas periódicas (p. ej. la revisión de plazos), para no repetirlas seguido.
+model JobRun {
+  name      String   @id @db.VarChar(40)
+  lastRunAt DateTime @map("last_run_at") @db.Timestamptz(3)
+
+  @@map("job_runs")
 }

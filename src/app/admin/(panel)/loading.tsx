@@ -1,33 +1,33 @@
-/** Esqueleto del Panel: franja de estados, lista y detalle. */
+/** Esqueleto del Panel de prioridades: cabecera oscura y tres carriles. */
 export default function Loading() {
-  const pulse = "animate-pulse bg-[#E2E8F0] motion-reduce:animate-none";
+  const pulse = "animate-pulse motion-reduce:animate-none";
   return (
-    <div className="lg:flex lg:h-[calc(100dvh-132px)] lg:min-h-[640px] lg:flex-col lg:gap-4" aria-busy="true" aria-label="Cargando el panel">
-      <div className="flex items-center gap-4">
-        <div className={`h-8 w-32 rounded-lg ${pulse}`} />
-        <div className={`ml-auto hidden h-11 w-80 rounded-xl sm:block ${pulse}`} />
-      </div>
-      <div className="mt-4 grid grid-cols-4 gap-[10px] lg:mt-0 lg:grid-cols-8">
-        {Array.from({ length: 8 }, (_, i) => (
-          <div key={i} className={`h-[78px] rounded-[14px] ${pulse}`} />
-        ))}
-      </div>
-      <div className="mt-4 overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white lg:mt-0 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[420px_1fr]">
-        <div className="space-y-3 p-5 lg:border-r lg:border-[#E2E8F0]">
-          {Array.from({ length: 6 }, (_, i) => (
-            <div key={i} className={`h-12 rounded-lg ${pulse}`} />
-          ))}
+    <div aria-busy="true" aria-label="Cargando el panel">
+      <div className="-mx-4 -mt-5 bg-[#0F172A] lg:-mx-7">
+        <div className="mx-auto max-w-[1300px] space-y-5 px-4 py-6 lg:px-7">
+          <div className="flex flex-wrap gap-4">
+            <div className={`h-14 w-72 rounded-lg bg-[#1E293B] ${pulse}`} />
+            <div className={`ml-auto h-12 w-96 max-w-full rounded-xl bg-[#1E293B] ${pulse}`} />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[1fr_300px]">
+            <div className="grid grid-cols-4 gap-2 lg:grid-cols-8">
+              {Array.from({ length: 8 }, (_, i) => (
+                <div key={i} className={`h-[74px] rounded-xl bg-[#1E293B] ${pulse}`} />
+              ))}
+            </div>
+            <div className={`h-[88px] rounded-xl bg-[#1E293B] ${pulse}`} />
+          </div>
         </div>
-        <div className="hidden space-y-4 p-8 lg:block">
-          <div className={`h-5 w-48 rounded ${pulse}`} />
-          <div className={`h-9 w-2/3 rounded-lg ${pulse}`} />
-          <div className="grid grid-cols-3 gap-2">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className={`h-16 rounded-xl ${pulse}`} />
+      </div>
+      <div className="mx-auto grid max-w-[1300px] gap-6 px-4 pt-5 lg:grid-cols-3 lg:gap-[18px] lg:px-7 lg:pt-6">
+        {[0, 1, 2].map((lane) => (
+          <div key={lane} className="space-y-3">
+            <div className={`h-[66px] rounded-[14px] bg-white ${pulse}`} />
+            {[0, 1].map((i) => (
+              <div key={i} className={`h-[170px] rounded-2xl border border-[#E2E8F0] bg-white ${pulse}`} />
             ))}
           </div>
-          <div className={`h-40 rounded-xl ${pulse}`} />
-        </div>
+        ))}
       </div>
     </div>
   );

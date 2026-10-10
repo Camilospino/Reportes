@@ -2,14 +2,23 @@
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
-import { Cable, File, Gauge, Router, Star, WifiOff } from "lucide-react";
+import { Cable, File, Gauge, PackageMinus, Router, Star, WifiOff, Wrench } from "lucide-react";
 import { Alert } from "@/components/alert";
-import { CATEGORY_LABEL, PRIORITY_LABEL, REPORT_FIELD_LABEL } from "@/domain/labels";
+import { EquipmentEditor, equipmentPayload, newEquipmentDraft, type EquipmentDraft } from "@/components/equipment-editor";
+import { CATEGORY_LABEL, ORDER_TYPE_LABEL, PRIORITY_LABEL, REPORT_FIELD_LABEL, WITHDRAWAL_REASON_LABEL } from "@/domain/labels";
 import { REPORT_TEMPLATES, TEMPLATE_BLANK, type ReportTemplate } from "@/domain/report-templates";
 import { fieldErrors, reportInputSchema } from "@/domain/schemas";
-import { CATEGORIES, type ActionResult, type Priority } from "@/domain/types";
+import { CATEGORIES, WITHDRAWAL_REASONS, type ActionResult, type OrderType, type Priority } from "@/domain/types";
+import { bogotaDateString } from "@/lib/dates";
 
 const TEMPLATE_ICONS = { "wifi-off": WifiOff, gauge: Gauge, cable: Cable, router: Router, file: File } as const;
+
+/** Paso 1: tipo de orden. */
+const TYPE_CARDS: { type: OrderType; Icon: typeof Wrench; help: string }[] = [
+  { type: "DANO", Icon: Wrench, help: "Falla en el servicio" },
+  { type: "INSTALACION", Icon: Router, help: "Servicio nuevo y sus equipos" },
+  { type: "RETIRO", Icon: PackageMinus, help: "Recoger equipos del cliente" },
+];
 
 /** Orden de los botones de prioridad (de menor a mayor) y su color. Tonos oscurecidos para 4.5:1 con texto blanco. */
 const PRIORITY_BUTTONS: { value: Priority; className: string }[] = [
@@ -25,12 +34,16 @@ type Values = {
   category: string;
   priority: string;
   description: string;
+  plan: string;
+  suggestedDate: string;
+  withdrawalReason: string;
+  withdrawalReasonOther: string;
   clientName: string;
   clientPhone: string;
   contractNumber: string;
   assignedToId: string;
 };
-type Field = keyof Values;
+type Field = keyof Values | "equipment";
 
 const EMPTY: Values = {
   street: "",
@@ -39,23 +52,24 @@ const EMPTY: Values = {
   category: "",
   priority: "",
   description: "",
+  plan: "",
+  suggestedDate: "",
+  withdrawalReason: "",
+  withdrawalReasonOther: "",
   clientName: "",
   clientPhone: "",
   contractNumber: "",
   assignedToId: "",
 };
 
-/** Orden visual de los campos obligatorios (para el foco y la lista "Faltan"). */
-const REQUIRED_ORDER: Field[] = [
-  "category",
-  "priority",
-  "description",
-  "street",
-  "neighborhood",
-  "clientName",
-  "clientPhone",
-  "contractNumber",
-];
+const COMMON_REQUIRED: Field[] = ["street", "neighborhood", "clientName", "clientPhone", "contractNumber"];
+
+/** Orden visual de los campos obligatorios de cada tipo (para el foco y la lista "Faltan"). */
+const REQUIRED_ORDER: Record<OrderType, Field[]> = {
+  DANO: ["category", "priority", "description", ...COMMON_REQUIRED],
+  INSTALACION: ["plan", "equipment", "suggestedDate", "priority", ...COMMON_REQUIRED],
+  RETIRO: ["withdrawalReason", "withdrawalReasonOther", "equipment", "priority", ...COMMON_REQUIRED],
+};
 
 const onlyDigits = (v: string) => v.replace(/\D/g, "").slice(0, 10);
 /** 3001234567 → "300 123 4567" mientras se escribe. */
@@ -63,26 +77,31 @@ function formatPhone(digits: string): string {
   return [digits.slice(0, 3), digits.slice(3, 6), digits.slice(6)].filter(Boolean).join(" ");
 }
 
+const isField = (k: string): k is Field => k in EMPTY || k === "equipment";
+
 /** Reglas del navegador: las del servidor (mismo esquema Zod) más teléfono de 10 dígitos y sin "____". */
-function validate(v: Values): Partial<Record<Field, string>> {
+function validate(type: OrderType, v: Values, equipment: EquipmentDraft[]): Partial<Record<Field, string>> {
   const errors: Partial<Record<Field, string>> = {};
-  const parsed = reportInputSchema.safeParse(v);
+  const parsed = reportInputSchema.safeParse({ ...v, type, equipment: equipmentPayload(equipment) });
   if (!parsed.success) {
     for (const [k, msgs] of Object.entries(fieldErrors(parsed.error))) {
-      if (k in EMPTY && msgs?.[0]) errors[k as Field] = msgs[0];
+      if (isField(k) && msgs?.[0]) errors[k] = msgs[0];
     }
   }
   if (onlyDigits(v.clientPhone).length !== 10) errors.clientPhone = "Ingrese un teléfono de 10 dígitos.";
-  if (!errors.description && v.description.includes(TEMPLATE_BLANK)) {
+  if (type === "DANO" && !errors.description && v.description.includes(TEMPLATE_BLANK)) {
     errors.description = "Complete los espacios ____ de la descripción.";
   }
   return errors;
 }
 
 /**
- * "Nuevo reporte" desde plantillas: el administrador elige el tipo de daño y el formulario aparece
- * con categoría, prioridad y descripción ya llenas. Guarda con la misma acción de siempre
- * (createReportAction), que valida otra vez en el servidor y redirige al reporte creado.
+ * "Nuevo reporte": primero el tipo de orden (Daño, Instalación o Retiro de equipos).
+ * - Daño: plantillas que llenan categoría, prioridad y descripción.
+ * - Instalación: plan, equipos a instalar y fecha sugerida.
+ * - Retiro: motivo y equipos a retirar.
+ * Cliente y dirección son comunes. Guarda con createReportAction, que valida otra vez en el
+ * servidor y redirige a la orden creada.
  */
 export function NewReportForm({
   action,
@@ -91,8 +110,10 @@ export function NewReportForm({
   action: (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
   technicians: { id: string; name: string }[];
 }) {
+  const [orderType, setOrderType] = useState<OrderType>("DANO");
   const [template, setTemplate] = useState<ReportTemplate | null>(null);
   const [values, setValues] = useState<Values>(EMPTY);
+  const [equipment, setEquipment] = useState<EquipmentDraft[]>(() => [newEquipmentDraft()]);
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [triedSubmit, setTriedSubmit] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -100,7 +121,22 @@ export function NewReportForm({
   const [focusAfterPick, setFocusAfterPick] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
 
-  const fill = template?.fill ?? null;
+  const fill = orderType === "DANO" ? (template?.fill ?? null) : null;
+  const showForm = orderType !== "DANO" || template !== null;
+  const required = REQUIRED_ORDER[orderType];
+
+  function pickType(t: OrderType) {
+    if (t === orderType) return;
+    setOrderType(t);
+    setErrors({});
+    setTriedSubmit(false);
+    setServerError(null);
+    // Instalaciones y retiros arrancan con prioridad media (se puede cambiar).
+    if (t !== "DANO") {
+      setValues((v) => (v.priority ? v : { ...v, priority: "MEDIA" }));
+      setFocusAfterPick((n) => n + 1);
+    }
+  }
   /** El campo aún tiene el valor que puso la plantilla (se pinta en azul). */
   const prefilled = (f: "category" | "priority" | "description") => fill !== null && values[f] === fill[f];
 
@@ -125,13 +161,13 @@ export function NewReportForm({
   // Tras elegir plantilla: foco en el primer campo obligatorio vacío.
   useEffect(() => {
     if (!focusAfterPick) return;
-    const first = REQUIRED_ORDER.find((f) => !values[f].trim());
+    const first = required.find((f) => f !== "equipment" && !values[f].trim());
     if (!first) return;
     const el = formRef.current?.querySelector<HTMLElement>(first === "priority" ? '[data-priority="first"]' : `#${first}`);
     el?.focus();
   }, [focusAfterPick]);
 
-  function set(field: Field, value: string) {
+  function set(field: keyof Values, value: string) {
     setValues((v) => ({ ...v, [field]: value }));
     if (triedSubmit) setErrors((e) => ({ ...e, [field]: undefined }));
   }
@@ -140,12 +176,14 @@ export function NewReportForm({
     e.preventDefault();
     setTriedSubmit(true);
     setServerError(null);
-    const found = validate(values);
+    const found = validate(orderType, values, equipment);
     setErrors(found);
     if (Object.keys(found).length) return; // no se envía nada
 
     const fd = new FormData();
+    fd.set("type", orderType);
     for (const [k, v] of Object.entries(values)) fd.set(k, k === "clientPhone" ? onlyDigits(v) : v);
+    if (orderType !== "DANO") fd.set("equipment", JSON.stringify(equipmentPayload(equipment)));
     startTransition(async () => {
       // Si sale bien, la acción redirige al reporte creado (?msg=creado), como siempre.
       const result = await action(null, fd);
@@ -153,50 +191,78 @@ export function NewReportForm({
         setServerError(result.error);
         const server: Partial<Record<Field, string>> = {};
         for (const [k, msgs] of Object.entries(result.fieldErrors ?? {})) {
-          if (k in EMPTY && msgs?.[0]) server[k as Field] = msgs[0];
+          if (isField(k) && msgs?.[0]) server[k] = msgs[0];
         }
         setErrors(server);
       }
     });
   }
 
-  const missing = REQUIRED_ORDER.filter((f) => errors[f]).map((f) => REPORT_FIELD_LABEL[f] ?? f);
+  const missing = required.filter((f) => errors[f]).map((f) => REPORT_FIELD_LABEL[f] ?? f);
 
   return (
     <div className="space-y-6">
-      {/* Paso 1: plantillas */}
-      <div className="grid grid-cols-1 gap-3.5 min-[480px]:grid-cols-2 min-[900px]:grid-cols-5" role="group" aria-label="Plantillas">
-        {REPORT_TEMPLATES.map((t) => {
-          const Icon = TEMPLATE_ICONS[t.icon];
-          const selected = template?.id === t.id;
+      {/* Paso 1: tipo de orden */}
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3" role="group" aria-label="Tipo de orden">
+        {TYPE_CARDS.map(({ type, Icon, help }) => {
+          const selected = orderType === type;
           return (
             <button
-              key={t.id}
+              key={type}
               type="button"
               aria-pressed={selected}
-              onClick={() => pick(t)}
-              className={`flex items-center gap-4 rounded-2xl border-2 bg-white p-[18px] text-left transition duration-200 ease-[cubic-bezier(.3,1.4,.5,1)] hover:-translate-y-1 hover:shadow-[0_14px_28px_rgba(15,23,42,.1)] motion-reduce:transition-none motion-reduce:hover:translate-y-0 min-[480px]:min-h-[150px] min-[480px]:flex-col min-[480px]:items-start min-[480px]:justify-between ${
+              onClick={() => pickType(type)}
+              className={`flex items-center gap-4 rounded-2xl border-2 bg-white p-[18px] text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_14px_28px_rgba(15,23,42,.1)] motion-reduce:transition-none motion-reduce:hover:translate-y-0 ${
                 selected ? "border-[#2563EB] shadow-[0_0_0_5px_rgba(37,99,235,.12)]" : "border-[#E2E8F0]"
               }`}
             >
-              <span
-                className={`flex size-12 shrink-0 items-center justify-center rounded-[14px] ${
-                  selected ? "bg-[#2563EB] text-white" : "bg-[#F1F5F9] text-[#334155]"
-                }`}
-              >
-                <Icon size={24} strokeWidth={2} aria-hidden />
+              <span className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${selected ? "bg-[#2563EB] text-white" : "bg-[#F1F5F9] text-[#334155]"}`}>
+                <Icon size={28} strokeWidth={2} aria-hidden />
               </span>
               <span>
-                <span className="block text-base font-extrabold text-[#0F172A]">{t.title}</span>
-                <span className="block text-[13px] text-[#64748B]">{t.help}</span>
+                <span className="block text-lg font-extrabold text-[#0F172A]">{ORDER_TYPE_LABEL[type]}</span>
+                <span className="block text-[13px] text-[#475569]">{help}</span>
               </span>
             </button>
           );
         })}
       </div>
 
-      {/* Paso 2: formulario */}
-      {template ? (
+      {/* Paso 2 (solo daños): plantillas */}
+      {orderType === "DANO" ? (
+        <div className="grid grid-cols-1 gap-3.5 min-[480px]:grid-cols-2 min-[900px]:grid-cols-5" role="group" aria-label="Plantillas">
+          {REPORT_TEMPLATES.map((t) => {
+            const Icon = TEMPLATE_ICONS[t.icon];
+            const selected = template?.id === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => pick(t)}
+                className={`flex items-center gap-4 rounded-2xl border-2 bg-white p-[18px] text-left transition duration-200 ease-[cubic-bezier(.3,1.4,.5,1)] hover:-translate-y-1 hover:shadow-[0_14px_28px_rgba(15,23,42,.1)] motion-reduce:transition-none motion-reduce:hover:translate-y-0 min-[480px]:min-h-[150px] min-[480px]:flex-col min-[480px]:items-start min-[480px]:justify-between ${
+                  selected ? "border-[#2563EB] shadow-[0_0_0_5px_rgba(37,99,235,.12)]" : "border-[#E2E8F0]"
+                }`}
+              >
+                <span
+                  className={`flex size-12 shrink-0 items-center justify-center rounded-[14px] ${
+                    selected ? "bg-[#2563EB] text-white" : "bg-[#F1F5F9] text-[#334155]"
+                  }`}
+                >
+                  <Icon size={24} strokeWidth={2} aria-hidden />
+                </span>
+                <span>
+                  <span className="block text-base font-extrabold text-[#0F172A]">{t.title}</span>
+                  <span className="block text-[13px] text-[#64748B]">{t.help}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {/* Formulario */}
+      {showForm ? (
         <form
           ref={formRef}
           onSubmit={submit}
@@ -207,7 +273,7 @@ export function NewReportForm({
             <p className="flex items-start gap-2 bg-[#EFF6FF] px-6 py-3 text-sm text-[#1E3A8A]">
               <Star size={16} className="mt-0.5 shrink-0" aria-hidden />
               <span>
-                Plantilla &quot;{template.title}&quot;: los campos en azul ya vienen llenos. Revíselos y complete los espacios ____.
+                Plantilla &quot;{template?.title}&quot;: los campos en azul ya vienen llenos. Revíselos y complete los espacios ____.
               </span>
             </p>
           ) : null}
@@ -218,23 +284,69 @@ export function NewReportForm({
           ) : null}
 
           <div className="grid grid-cols-1 gap-x-5 gap-y-[18px] px-6 py-[26px] min-[900px]:grid-cols-2">
-            <Section first>Daño</Section>
-            <FieldBox id="category" label="Categoría *" error={errors.category}>
-              <select
-                id="category"
-                value={values.category}
-                onChange={(e) => set("category", e.target.value)}
-                className={inputClass(errors.category, prefilled("category"))}
-                {...ariaFor("category", errors.category)}
-              >
-                <option value="">Seleccione…</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {CATEGORY_LABEL[c]}
-                  </option>
-                ))}
-              </select>
-            </FieldBox>
+            <Section first>{ORDER_TYPE_LABEL[orderType]}</Section>
+            {orderType === "DANO" ? (
+              <FieldBox id="category" label="Categoría *" error={errors.category}>
+                <select
+                  id="category"
+                  value={values.category}
+                  onChange={(e) => set("category", e.target.value)}
+                  className={inputClass(errors.category, prefilled("category"))}
+                  {...ariaFor("category", errors.category)}
+                >
+                  <option value="">Seleccione…</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {CATEGORY_LABEL[c]}
+                    </option>
+                  ))}
+                </select>
+              </FieldBox>
+            ) : null}
+            {orderType === "INSTALACION" ? (
+              <>
+                <FieldBox id="plan" label="Plan o velocidad *" error={errors.plan}>
+                  <input id="plan" value={values.plan} onChange={(e) => set("plan", e.target.value)} maxLength={60} placeholder="Ej.: 300 Mbps" className={inputClass(errors.plan)} {...ariaFor("plan", errors.plan)} />
+                </FieldBox>
+                <FieldBox id="suggestedDate" label="Fecha sugerida para la visita" error={errors.suggestedDate}>
+                  <input id="suggestedDate" type="date" min={bogotaDateString()} value={values.suggestedDate} onChange={(e) => set("suggestedDate", e.target.value)} className={inputClass(errors.suggestedDate)} {...ariaFor("suggestedDate", errors.suggestedDate)} />
+                </FieldBox>
+              </>
+            ) : null}
+            {orderType === "RETIRO" ? (
+              <>
+                <FieldBox id="withdrawalReason" label="Motivo del retiro *" error={errors.withdrawalReason}>
+                  <select id="withdrawalReason" value={values.withdrawalReason} onChange={(e) => set("withdrawalReason", e.target.value)} className={inputClass(errors.withdrawalReason)} {...ariaFor("withdrawalReason", errors.withdrawalReason)}>
+                    <option value="">Seleccione…</option>
+                    {WITHDRAWAL_REASONS.map((r) => (
+                      <option key={r} value={r}>
+                        {WITHDRAWAL_REASON_LABEL[r]}
+                      </option>
+                    ))}
+                  </select>
+                </FieldBox>
+                {values.withdrawalReason === "OTRO" ? (
+                  <FieldBox id="withdrawalReasonOther" label="¿Cuál motivo? *" error={errors.withdrawalReasonOther}>
+                    <input id="withdrawalReasonOther" value={values.withdrawalReasonOther} onChange={(e) => set("withdrawalReasonOther", e.target.value)} maxLength={200} className={inputClass(errors.withdrawalReasonOther)} {...ariaFor("withdrawalReasonOther", errors.withdrawalReasonOther)} />
+                  </FieldBox>
+                ) : (
+                  <div className="hidden min-[900px]:block" aria-hidden />
+                )}
+              </>
+            ) : null}
+            {orderType !== "DANO" ? (
+              <div className="min-[900px]:col-span-2">
+                <EquipmentEditor
+                  items={equipment}
+                  onChange={(items) => {
+                    setEquipment(items);
+                    if (triedSubmit) setErrors((e) => ({ ...e, equipment: undefined }));
+                  }}
+                  label={orderType === "INSTALACION" ? "Equipos a instalar *" : "Equipos a retirar *"}
+                  error={errors.equipment}
+                />
+              </div>
+            ) : null}
             <div>
               <p id="priority-label" className="mb-1.5 text-sm font-bold text-[#334155]">
                 Prioridad *{" "}
@@ -266,7 +378,13 @@ export function NewReportForm({
               </div>
               <ErrorText id="priority-error" text={errors.priority} />
             </div>
-            <FieldBox id="description" label="Descripción del posible daño *" error={errors.description} wide warn={errors.description?.includes("____")}>
+            <FieldBox
+              id="description"
+              label={orderType === "DANO" ? "Descripción del posible daño *" : "Observaciones (opcional)"}
+              error={errors.description}
+              wide
+              warn={errors.description?.includes("____")}
+            >
               <textarea
                 id="description"
                 value={values.description}
@@ -277,7 +395,7 @@ export function NewReportForm({
                 {...ariaFor("description", errors.description)}
               />
             </FieldBox>
-            {!errors.description && values.description.includes(TEMPLATE_BLANK) ? (
+            {orderType === "DANO" && !errors.description && values.description.includes(TEMPLATE_BLANK) ? (
               <p className="-mt-3 text-[13px] text-[#B45309] min-[900px]:col-span-2">Complete los espacios ____ de la descripción.</p>
             ) : null}
 
@@ -346,7 +464,7 @@ export function NewReportForm({
                 disabled={pending}
                 className="flex h-[46px] min-w-44 items-center justify-center rounded-xl bg-[#2563EB] px-6 font-extrabold text-white hover:bg-[#1D4ED8] disabled:opacity-70"
               >
-                {pending ? "Publicando…" : "Publicar reporte"}
+                {pending ? "Publicando…" : orderType === "DANO" ? "Publicar reporte" : `Publicar ${ORDER_TYPE_LABEL[orderType].toLowerCase()}`}
               </button>
             </div>
           </div>

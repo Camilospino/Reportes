@@ -29,6 +29,7 @@ async function newUser(role: "ADMIN" | "TECNICO"): Promise<Ctx> {
 
 async function newReport() {
   return createReport(admin, {
+    type: "DANO",
     street: "Calle Test 1",
     neighborhood: "Centro",
     city: "Cartagena de Indias, Bolívar",
@@ -283,7 +284,7 @@ describe("Panel del administrador: decisiones de la bandeja", () => {
     verificar: { transition: "VERIFICAR", onlyFrom: ["REALIZADO"] },
     devolver: { transition: "RECHAZAR", onlyFrom: ["REALIZADO"] },
     reprogramar: { transition: "REPROGRAMAR", onlyFrom: ["APLAZADO", "CLIENTE_AUSENTE"] },
-    cancelar: { transition: "CANCELAR", onlyFrom: ["APLAZADO", "CLIENTE_AUSENTE"] },
+    cancelar: { transition: "CANCELAR", onlyFrom: ["PENDIENTE", "EN_PROCESO", "APLAZADO", "CLIENTE_AUSENTE"] },
   } as const;
   const decide = (ctx: Ctx, d: keyof typeof PANEL, reportId: string, nota?: string) =>
     applyTransition(ctx, { reportId, requestId: randomUUID(), comment: nota ?? null, ...PANEL[d] });
@@ -330,15 +331,36 @@ describe("Panel del administrador: decisiones de la bandeja", () => {
     expect(await lastLog(id)).toMatchObject({ action: "REPROGRAMAR", fromStatus: "APLAZADO", comment: "Volver el lunes" });
   });
 
-  it("cancelar: Cliente ausente → Cancelado; desde la bandeja NO se cancela un Pendiente", async () => {
+  it("cancelar: desde Cliente ausente, Pendiente y En proceso; no desde Realizado", async () => {
     const id = await inState("CLIENTE_AUSENTE");
     await decide(admin, "cancelar", id, "Cliente desistió");
     expect((await row(id)).status).toBe("CANCELADO");
     expect(await lastLog(id)).toMatchObject({ action: "CANCELAR", fromStatus: "CLIENTE_AUSENTE", toStatus: "CANCELADO", comment: "Cliente desistió" });
 
     const { id: pendiente } = await newReport();
-    await expect(decide(admin, "cancelar", pendiente)).rejects.toMatchObject({ status: 409 });
-    expect((await row(pendiente)).status).toBe("PENDIENTE");
+    await decide(admin, "cancelar", pendiente);
+    expect((await row(pendiente)).status).toBe("CANCELADO");
+
+    const { id: enProceso } = await newReport();
+    await applyTransition(t1, { reportId: enProceso, transition: "TOMAR", requestId: randomUUID() });
+    await decide(admin, "cancelar", enProceso);
+    expect((await row(enProceso)).status).toBe("CANCELADO");
+
+    const realizado = await inState("REALIZADO");
+    await expect(decide(admin, "cancelar", realizado)).rejects.toMatchObject({ status: 409 });
+    expect((await row(realizado)).status).toBe("REALIZADO");
+  });
+
+  it("reprogramar o devolver no cambian el plazo (venceEn) y dejan su fila en el historial", async () => {
+    for (const [state, d] of [["APLAZADO", "reprogramar"], ["REALIZADO", "devolver"]] as const) {
+      const id = await inState(state);
+      const before = await row(id);
+      await decide(admin, d, id);
+      const after = await row(id);
+      expect(after.status).toBe("PENDIENTE");
+      expect(after.dueAt.getTime()).toBe(before.dueAt.getTime());
+      expect((await lastLog(id)).action).toBe(d === "reprogramar" ? "REPROGRAMAR" : "RECHAZAR");
+    }
   });
 
   it("verificar dos veces (dos pestañas): la segunda falla con conflicto y no escribe historial", async () => {

@@ -1,6 +1,6 @@
 /**
- * Datos de DEMOSTRACIÓN: 1 administrador, 2 técnicos y 10 reportes en todos los estados,
- * con historial y fotos de ejemplo.
+ * Datos de DEMOSTRACIÓN: 1 administrador, 2 técnicos y 12 órdenes (10 daños en todos los estados,
+ * una instalación y un retiro), con historial, equipos y fotos de ejemplo.
  *
  *   npm run db:seed
  *
@@ -19,6 +19,9 @@ const prisma = new PrismaClient();
 const PASSWORD = process.env.SEED_PASSWORD ?? "Cambiar.2026";
 const HOUR = 60 * 60 * 1000;
 const ago = (hours: number) => new Date(Date.now() - hours * HOUR);
+/** Plazo por defecto de los tres tipos (igual que la migración y Ajustes → Plazos). */
+const DEADLINE_HOURS = 72;
+const WARN_FROM_HOURS = 24;
 
 async function main() {
   if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEMO_SEED !== "1") {
@@ -27,6 +30,14 @@ async function main() {
   if (await prisma.user.findUnique({ where: { username: "admin" } })) {
     console.log("Ya existen datos semilla (usuario 'admin'). Para reiniciar: npm run db:reset");
     return;
+  }
+
+  for (const type of ["DANO", "INSTALACION", "RETIRO"] as const) {
+    await prisma.deadlineConfig.upsert({
+      where: { type },
+      create: { type, deadlineHours: DEADLINE_HOURS, warnFromHours: WARN_FROM_HOURS },
+      update: {},
+    });
   }
 
   const passwordHash = await hashPassword(PASSWORD);
@@ -58,24 +69,38 @@ async function main() {
   };
 
   async function report(
-    base: Omit<Prisma.ReportUncheckedCreateInput, "searchText" | "createdById" | "createdAt">,
+    base: Omit<Prisma.ReportUncheckedCreateInput, "searchText" | "createdById" | "createdAt" | "dueAt">,
     createdHoursAgo: number,
     events: Event[],
   ) {
+    const createdAt = ago(createdHoursAgo);
+    const dueAt = new Date(createdAt.getTime() + DEADLINE_HOURS * HOUR);
+    const completedAt = base.status === "REALIZADO" || base.status === "VERIFICADO" ? lastAt(events, "REALIZADO") : null;
     const r = await prisma.report.create({
       data: {
         ...base,
         searchText: buildSearchText(base),
         createdById: admin.id,
-        createdAt: ago(createdHoursAgo),
+        createdAt,
+        dueAt,
+        warnFromHours: WARN_FROM_HOURS,
         version: events.length,
         closedAt: base.status === "VERIFICADO" || base.status === "CANCELADO" ? ago(events.at(-1)?.at ?? 0) : null,
         startedAt: base.status === "PENDIENTE" ? null : lastAt(events, "TOMAR"),
-        completedAt: base.status === "REALIZADO" || base.status === "VERIFICADO" ? lastAt(events, "REALIZADO") : null,
+        completedAt,
+        metDeadline: completedAt ? completedAt <= dueAt : null,
       },
     });
     await prisma.auditLog.create({
-      data: { actorId: admin.id, entity: "REPORT", action: "CREAR", reportId: r.id, toStatus: "PENDIENTE", createdAt: ago(createdHoursAgo) },
+      data: {
+        actorId: admin.id,
+        entity: "REPORT",
+        action: "CREAR",
+        reportId: r.id,
+        toStatus: "PENDIENTE",
+        data: { tipo: base.type ?? "DANO" },
+        createdAt,
+      },
     });
     for (const e of events) {
       const log = await prisma.auditLog.create({
@@ -190,6 +215,48 @@ async function main() {
       { at: 38, actor: t2.id, action: "REALIZADO", from: "EN_PROCESO", to: "REALIZADO", photos: [{ kind: "EVIDENCIA", label: "Prueba de velocidad", color: "#6b21a8" }] },
       { at: 30, actor: admin.id, action: "RECHAZAR", from: "REALIZADO", to: "PENDIENTE", comment: "Falta la foto de la prueba de velocidad con cable. Por favor volver a medir." },
     ],
+  );
+
+  // 11: instalación pendiente, sin técnico
+  await report(
+    {
+      type: "INSTALACION",
+      street: "Calle 5 # 3-40",
+      neighborhood: "Manga",
+      city: CITY,
+      referencePoint: "Edificio Bahía, apto 801",
+      priority: "MEDIA",
+      plan: "300 Mbps",
+      description: "Cliente nuevo. Llamar antes de subir: portería pide autorización.",
+      status: "PENDIENTE",
+      equipment: { create: [{ kind: "ONU", action: "INSTALAR" }, { kind: "Router", action: "INSTALAR" }] },
+      ...client("Valentina Ríos", "3015552211"),
+    },
+    10,
+    [],
+  );
+  // 12: retiro en proceso por mora
+  await report(
+    {
+      type: "RETIRO",
+      street: "Carrera 17 # 25-08",
+      neighborhood: "El Cabrero",
+      city: CITY,
+      priority: "BAJA",
+      withdrawalReason: "MORA",
+      description: "",
+      status: "EN_PROCESO",
+      assignedToId: t1.id,
+      equipment: {
+        create: [
+          { kind: "Router", serial: "ZTE-F670L-88231", action: "RETIRAR" },
+          { kind: "Decodificador", action: "RETIRAR" },
+        ],
+      },
+      ...client("Mauricio Pardo", "3138884455"),
+    },
+    20,
+    [{ at: 2, actor: t1.id, action: "TOMAR", from: "PENDIENTE", to: "EN_PROCESO" }],
   );
 
   console.log("✔ Datos semilla creados.");

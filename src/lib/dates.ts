@@ -29,6 +29,16 @@ export function formatShortDateTime(d: Date | string, now: Date = new Date()): s
   return `${dayMonthFmt.format(date).replace(/\sde\s/, " ").replace(/\.$/, "")}, ${time}`;
 }
 
+const weekdayFmt = new Intl.DateTimeFormat("es-CO", { timeZone: TIME_ZONE, weekday: "short", day: "numeric", month: "numeric" });
+
+/** "sáb 10/10, 12:00 p. m." (hora de Bogotá), para vencimientos. */
+export function formatDueDate(d: Date | string): string {
+  const date = new Date(d);
+  const p = weekdayFmt.formatToParts(date);
+  const get = (t: string) => p.find((x) => x.type === t)?.value ?? "";
+  return `${get("weekday").replace(".", "")} ${get("day")}/${get("month")}, ${timeFmt.format(date)}`;
+}
+
 /** "HH:MM" en 24 horas, hora de Bogotá. */
 export const formatClock = (d: Date) => clockFmt.format(d);
 export const formatDate = (d: Date | string) => dateFmt.format(new Date(d));

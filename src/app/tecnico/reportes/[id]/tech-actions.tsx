@@ -3,6 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert } from "@/components/alert";
+import {
+  EquipmentClosing,
+  closingPayload,
+  closingProblem,
+  initialClosing,
+  type ClosingEquipment,
+  type ClosingValue,
+} from "@/components/equipment-closing";
+import type { OrderType } from "@/domain/types";
 import { bogotaDateString, bogotaDateTimeLocal } from "@/lib/dates";
 import { NETWORK_ERROR_MSG, newId, withRetry } from "@/lib/client-utils";
 import type { ActionResult } from "@/domain/types";
@@ -18,12 +27,17 @@ type Mode = "REALIZADO" | "APLAZADO" | "CLIENTE_AUSENTE";
 export function TechActions({
   reportId,
   reportCode,
+  type,
+  equipment,
   canTake,
   isWorking,
 }: {
   reportId: string;
   /** Consecutivo del reporte, para el aviso de la pantalla de inicio. */
   reportCode: number;
+  type: OrderType;
+  /** Equipos de instalaciones y retiros (paso de cierre al marcar Realizado). */
+  equipment: ClosingEquipment[];
   canTake: boolean;
   isWorking: boolean;
 }) {
@@ -41,6 +55,7 @@ export function TechActions({
   const [attemptedAt, setAttemptedAt] = useState("");
   const [photos, setPhotos] = useState<{ ids: string[]; busy: boolean }>({ ids: [], busy: false });
   const onPhotos = useCallback((s: { ids: string[]; busy: boolean }) => setPhotos(s), []);
+  const [closing, setClosing] = useState<ClosingValue[]>(() => initialClosing(equipment));
   const formRef = useRef<HTMLFormElement>(null);
 
   // Al elegir un resultado, llevar el formulario a la vista (en celular queda bajo el pliegue).
@@ -94,7 +109,7 @@ export function TechActions({
     if (!mode) return;
     const payload =
       mode === "REALIZADO"
-        ? { transition: mode, reportId, requestId, note, attachmentIds: photos.ids }
+        ? { transition: mode, reportId, requestId, note, attachmentIds: photos.ids, equipment: closingPayload(type, closing) }
         : mode === "APLAZADO"
           ? { transition: mode, reportId, requestId, reason, newDate }
           : { transition: mode, reportId, requestId, attemptedAt, attachmentIds: photos.ids };
@@ -140,8 +155,9 @@ export function TechActions({
   }
 
   const photosMissing = mode === "REALIZADO" && photos.ids.length === 0;
+  const equipmentMissing = mode === "REALIZADO" && closingProblem(type, closing) !== null;
   const submitDisabled =
-    busy || photos.busy || photosMissing || (mode === "APLAZADO" && reason.trim().length === 0) || (mode === "CLIENTE_AUSENTE" && !attemptedAt);
+    busy || photos.busy || photosMissing || equipmentMissing || (mode === "APLAZADO" && reason.trim().length === 0) || (mode === "CLIENTE_AUSENTE" && !attemptedAt);
 
   return (
     <form ref={formRef} onSubmit={submit} className="card scroll-mt-28 space-y-4" noValidate>
@@ -151,6 +167,10 @@ export function TechActions({
 
       {mode === "REALIZADO" ? (
         <>
+          {type !== "DANO" && equipment.length ? (
+            <EquipmentClosing type={type} equipment={equipment} values={closing} onChange={setClosing} disabled={busy} />
+          ) : null}
+          {fieldErrors.equipment ? <p className="field-error">{fieldErrors.equipment[0]}</p> : null}
           <PhotoPicker reportId={reportId} kind="EVIDENCIA" max={10} label="Fotos de evidencia * (mínimo 1)" onChange={onPhotos} />
           {fieldErrors.attachmentIds ? <p className="field-error">{fieldErrors.attachmentIds[0]}</p> : null}
           <div>

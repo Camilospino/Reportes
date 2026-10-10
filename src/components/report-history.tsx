@@ -1,4 +1,12 @@
-import { ATTACHMENT_KIND_LABEL, AUDIT_ACTION_LABEL, REPORT_FIELD_LABEL, STATUS_LABEL } from "@/domain/labels";
+import {
+  ATTACHMENT_KIND_LABEL,
+  AUDIT_ACTION_LABEL,
+  EQUIPMENT_CONDITION_LABEL,
+  ORDER_TYPE_LABEL,
+  REPORT_FIELD_LABEL,
+  STATUS_LABEL,
+} from "@/domain/labels";
+import type { EquipmentCondition, OrderType } from "@/domain/types";
 import { formatDateOnly, formatDateTime, parseBogotaDateTimeLocal } from "@/lib/dates";
 import type { ReportDetail } from "@/server/reports";
 
@@ -61,11 +69,13 @@ function EntryData({ data }: { data: Entry["data"] }) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   const d = data as Record<string, unknown>;
   const rows: [string, string][] = [];
+  if (typeof d.tipo === "string" && d.tipo in ORDER_TYPE_LABEL) rows.push(["Tipo", ORDER_TYPE_LABEL[d.tipo as OrderType]]);
   if (typeof d.nota === "string") rows.push(["Nota", d.nota]);
   if (typeof d.motivo === "string" && !("username" in d)) rows.push(["Motivo", d.motivo]);
   if (typeof d.nuevaFecha === "string") rows.push(["Nueva fecha estimada", formatDateOnly(`${d.nuevaFecha}T00:00:00Z`)]);
   if (typeof d.fechaIntento === "string") rows.push(["Fecha y hora del intento", formatDateTime(parseBogotaDateTimeLocal(d.fechaIntento))]);
   const changes = d.changes as Record<string, { from: string | null; to: string | null }> | undefined;
+  const equipos = Array.isArray(d.equipos) ? (d.equipos as ClosingEntry[]) : [];
 
   return (
     <>
@@ -74,6 +84,13 @@ function EntryData({ data }: { data: Entry["data"] }) {
           <span className="font-semibold">{k}:</span> <span className="whitespace-pre-wrap">{v}</span>
         </p>
       ))}
+      {equipos.length ? (
+        <ul className="mt-1 space-y-0.5 text-sm text-slate-700">
+          {equipos.map((e, i) => (
+            <li key={i}>{equipmentLine(e)}</li>
+          ))}
+        </ul>
+      ) : null}
       {changes ? (
         <ul className="mt-1 space-y-0.5 text-sm text-slate-700">
           {Object.entries(changes).map(([field, c]) => (
@@ -86,4 +103,22 @@ function EntryData({ data }: { data: Entry["data"] }) {
       ) : null}
     </>
   );
+}
+
+type ClosingEntry = {
+  tipo: string;
+  serial: string | null;
+  recibido: boolean | null;
+  estado: EquipmentCondition | null;
+  observacion: string | null;
+};
+
+/** "Router · serial ABC123 · recibido, Bueno · Le falta el cargador" */
+export function equipmentLine(e: ClosingEntry): string {
+  const parts = [e.tipo];
+  if (e.serial) parts.push(`serial ${e.serial}`);
+  if (e.recibido === true) parts.push(`recibido${e.estado ? `, ${EQUIPMENT_CONDITION_LABEL[e.estado]}` : ""}`);
+  if (e.recibido === false) parts.push("NO recibido");
+  if (e.observacion) parts.push(e.observacion);
+  return parts.join(" · ");
 }

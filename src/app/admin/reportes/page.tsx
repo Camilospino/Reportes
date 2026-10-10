@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { Inter_Tight, JetBrains_Mono } from "next/font/google";
+import { orderSummary } from "@/domain/labels";
 import { reportFiltersSchema } from "@/domain/schemas";
 import { TIME_ZONE } from "@/lib/dates";
-import { countByStatusForAdmin, listReportsForAdmin } from "@/server/reports";
+import { listReportsForAdmin } from "@/server/reports";
 import { requireRole } from "@/server/session";
 import { listActiveTechniciansForSelect } from "@/server/users";
 import { ReportsBrowser, type ReportRow } from "./reports-browser";
@@ -37,14 +38,12 @@ export default async function ReportsListPage({ searchParams }: { searchParams: 
     desde: one("desde") || undefined,
     hasta: one("hasta") || undefined,
     q: one("q") || undefined,
+    tipo: one("tipo") || undefined,
+    plazo: one("plazo") || undefined,
     orden: one("orden"),
     page: one("page"),
   });
-  const [result, counts, technicians] = await Promise.all([
-    listReportsForAdmin(filters),
-    countByStatusForAdmin(filters),
-    listActiveTechniciansForSelect(),
-  ]);
+  const [result, technicians] = await Promise.all([listReportsForAdmin(filters), listActiveTechniciansForSelect()]);
 
   const rows: ReportRow[] = result.items.map((r) => ({
     id: r.id,
@@ -52,7 +51,8 @@ export default async function ReportsListPage({ searchParams }: { searchParams: 
     street: r.street,
     neighborhood: r.neighborhood,
     city: r.city,
-    category: r.category,
+    type: r.type,
+    summary: orderSummary(r),
     priority: r.priority,
     status: r.status,
     assignedToId: r.assignedToId,
@@ -60,6 +60,10 @@ export default async function ReportsListPage({ searchParams }: { searchParams: 
     version: r.version,
     createdDay: shortDay(r.createdAt),
     createdTime: timeFmt.format(r.createdAt),
+    createdAt: r.createdAt,
+    dueAt: r.dueAt,
+    warnFromHours: r.warnFromHours,
+    completedAt: r.completedAt,
   }));
 
   return (
@@ -71,7 +75,10 @@ export default async function ReportsListPage({ searchParams }: { searchParams: 
     >
       <ReportsBrowser
         rows={rows}
-        counts={counts}
+        counts={result.statusCounts}
+        typeCounts={result.typeCounts}
+        levelCounts={result.levelCounts}
+        now={Date.now()}
         total={result.total}
         page={result.page}
         pageCount={result.pageCount}
@@ -82,6 +89,8 @@ export default async function ReportsListPage({ searchParams }: { searchParams: 
           desde: filters.desde,
           hasta: filters.hasta,
           q: filters.q,
+          tipo: filters.tipo,
+          plazo: filters.plazo,
           orden: filters.orden,
         }}
         technicians={technicians}

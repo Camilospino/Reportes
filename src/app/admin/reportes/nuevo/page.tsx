@@ -18,7 +18,7 @@ export default async function NewReportPage() {
       <header>
         <h1 className="text-[32px] leading-tight font-extrabold tracking-[-0.8px] text-[#0F172A]">Nuevo reporte</h1>
         <p className="mt-1 text-base text-[#475569]">
-          Elija una plantilla para empezar más rápido. Todo se puede cambiar después.
+          Elija el tipo de orden. En daños, una plantilla le llena lo principal. Todo se puede cambiar después.
         </p>
       </header>
       <NewReportForm action={createReportAction} technicians={technicians} />
